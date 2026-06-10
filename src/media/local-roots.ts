@@ -52,6 +52,8 @@ function buildMediaLocalRoots(
       path.join(resolvedStateDir, "canvas"),
       path.join(resolvedStateDir, "workspace"),
       path.join(resolvedStateDir, "sandboxes"),
+      // local patch: serve host-mounted images (docker volume /home/gustavo/Imagens)
+      "/home/node/imagens",
     ]),
   );
 }

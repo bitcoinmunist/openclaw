@@ -4,17 +4,14 @@ services:
     build: .
     env_file:
       - path: .env
-        required: false
+        required: true
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
       TERM: xterm-256color
       # Pin container-side state, workspace, and config paths so host values written to
       # `.env` (used by Compose for the bind-mount source below) cannot leak
-      # into runtime code that resolves these env vars inside the container.
-      # Without this override, a macOS host path like /Users/<you>/.openclaw/...
-      # imported from .env caused first-reply `mkdir '/Users'` EACCES failures
-      # in Linux Docker (#77436).
+      # into runtime code that resolves these env vars inside the container (#77436).
       OPENCLAW_STATE_DIR: /home/node/.openclaw
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
@@ -24,10 +21,8 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       # Empty means auto: Bonjour disables itself in detected containers.
-      # Set 0 only on host/macvlan/mDNS-capable networks; set 1 to force off.
       OPENCLAW_DISABLE_BONJOUR: ${OPENCLAW_DISABLE_BONJOUR:-}
-      # OpenTelemetry export is outbound OTLP/HTTP from the Gateway. Prometheus
-      # uses the existing authenticated Gateway route; it does not need a port.
+      # OpenTelemetry export is outbound OTLP/HTTP from the Gateway.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: ${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:-}
@@ -39,38 +34,46 @@ services:
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
       OTEL_SEMCONV_STABILITY_OPT_IN: ${OTEL_SEMCONV_STABILITY_OPT_IN:-}
       OPENCLAW_OTEL_PRELOADED: ${OPENCLAW_OTEL_PRELOADED:-}
+      # OPENROUTER_API_KEY / GEMINI_API_KEY are loaded automatically from .env via env_file.
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
       TZ: ${OPENCLAW_TZ:-UTC}
+      # local patch: redirect caches to tmpfs so plugin installs work under read_only rootfs
+      npm_config_cache: /tmp/.npm
+      npm_config_logs_dir: /tmp/.npm-logs
+      XDG_CACHE_HOME: /tmp/.cache
     volumes:
       - "${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw"
       - "${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace"
       - "${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-${HOME:-/tmp}/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw"
-      ## Uncomment the lines below to enable sandbox isolation
-      ## (agents.defaults.sandbox). Requires Docker CLI in the image
-      ## (build with --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1) or use
-      ## scripts/docker/setup.sh with OPENCLAW_SANDBOX=1 for automated setup.
-      ## Set DOCKER_GID to the host's docker group GID (run: stat -c '%g' /var/run/docker.sock).
-      # - /var/run/docker.sock:/var/run/docker.sock
-    # group_add:
-    #   - "${DOCKER_GID:-999}"
-    # Let bundled local-model providers reach host-side LM Studio/Ollama via
-    # http://host.docker.internal:<port>. Docker Desktop usually provides this
-    # alias; the host-gateway mapping makes it work on Linux Docker Engine too.
+      # local patch: serve host-mounted images to agents (media local root /home/node/imagens)
+      - /home/gustavo/Imagens:/home/node/imagens:ro
+      - /home/gustavo/Imagens/openclaw:/home/node/imagens/openclaw:rw
     cap_drop:
-      - NET_RAW
-      - NET_ADMIN
+      - ALL
     security_opt:
       - no-new-privileges:true
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # local patch: publish ports on loopback only (host-level network isolation);
+    # container itself binds lan (0.0.0.0) so Docker port forwarding still works.
     ports:
-      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-      - "${OPENCLAW_MSTEAMS_PORT:-3978}:3978"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "127.0.0.1:${OPENCLAW_BRIDGE_PORT:-18790}:18790"
+      - "127.0.0.1:${OPENCLAW_MSTEAMS_PORT:-3978}:3978"
     init: true
     restart: unless-stopped
+    # local patch: defense-in-depth hardening (validated on 2026.2.25)
+    read_only: true
+    tmpfs:
+      - /tmp:size=256M
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+          pids: 256
     command:
       [
         "node",
@@ -98,7 +101,7 @@ services:
     network_mode: "service:openclaw-gateway"
     env_file:
       - path: .env
-        required: false
+        required: true
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -108,8 +111,7 @@ services:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
       TERM: xterm-256color
-      # Pin container-side state, workspace, and config paths so host values written to
-      # `.env` cannot leak into runtime code via the env_file import (#77436).
+      # Pin container-side state, workspace, and config paths (#77436).
       OPENCLAW_STATE_DIR: /home/node/.openclaw
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
@@ -133,3 +135,21 @@ services:
     entrypoint: ["node", "dist/index.js"]
     depends_on:
       - openclaw-gateway
+
+  # local addition: dedicated locked-down image for agent sandbox isolation.
+  openclaw-sandbox:
+    image: openclaw-sandbox:bookworm-slim
+    network_mode: "none"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+          pids: 64
