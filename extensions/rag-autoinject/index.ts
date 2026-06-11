@@ -35,6 +35,56 @@ function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/** Extrai texto de um content que pode ser string ou array de blocos {text}. */
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => {
+        if (typeof c === "string") return c;
+        if (c && typeof c === "object") {
+          const o = c as { text?: unknown; content?: unknown };
+          if (typeof o.text === "string") return o.text;
+          if (typeof o.content === "string") return o.content;
+        }
+        return "";
+      })
+      .join(" ");
+  }
+  return "";
+}
+
+/**
+ * Monta a query de busca a partir dos últimos `recentUserTurns` turnos do usuário
+ * (mensagem atual + anteriores), para que follow-ups em grupo ("e para menores?")
+ * busquem com contexto. Limita a 800 chars. Falha graciosa para só a mensagem atual.
+ */
+function buildConversationQuery(
+  prompt: string,
+  messages: unknown,
+  recentUserTurns: number,
+): string {
+  const current = (prompt ?? "").trim();
+  if (recentUserTurns <= 1 || !Array.isArray(messages)) return current;
+  try {
+    const userTexts: string[] = [];
+    for (const m of messages) {
+      if (m && typeof m === "object") {
+        const mm = m as { role?: unknown; content?: unknown };
+        if (mm.role === "user") {
+          const t = extractText(mm.content).trim();
+          if (t) userTexts.push(t);
+        }
+      }
+    }
+    const prev = userTexts.filter((t) => t !== current).slice(-(recentUserTurns - 1));
+    const query = [...prev, current].join("\n").trim();
+    return query.length > 800 ? query.slice(-800) : query;
+  } catch {
+    return current;
+  }
+}
+
 export default definePluginEntry({
   id: PLUGIN_ID,
   name: "RAG Auto-Inject",
@@ -63,7 +113,8 @@ export default definePluginEntry({
           // Only inject for real user-driven turns (skip heartbeats/system triggers).
           if (ctx.trigger && ctx.trigger !== "user") return undefined;
 
-          const query = (event?.prompt ?? "").trim();
+          const recentUserTurns = Math.max(1, Math.min(4, Math.round(asNumber(pc.recentUserTurns, 2))));
+          const query = buildConversationQuery(event?.prompt ?? "", event?.messages, recentUserTurns);
           if (query.length < 3) return undefined;
 
           const maxChunks = Math.max(1, Math.min(30, Math.round(asNumber(pc.maxChunks, 8))));
