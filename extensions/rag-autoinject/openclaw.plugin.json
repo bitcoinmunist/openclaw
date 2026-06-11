@@ -1,0 +1,41 @@
+{
+  "id": "rag-autoinject",
+  "activation": {
+    "onStartup": true
+  },
+  "name": "RAG Auto-Inject",
+  "description": "Before each eligible user turn, searches the agent's memory corpus and injects the raw retrieved chunks (with their page markers) into prompt context, so the model answers from the real documents and cites real pages instead of fabricating them.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "agents": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "maxChunks": { "type": "integer", "minimum": 1, "maximum": 30 },
+      "minScore": { "type": "number", "minimum": 0, "maximum": 1 },
+      "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 30000 },
+      "logging": { "type": "boolean" }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable RAG Auto-Inject",
+      "help": "Automatically search documents and inject raw chunks before each reply."
+    },
+    "agents": {
+      "label": "Scoped Agents",
+      "help": "Only these agent ids get auto-injection (empty = all agents)."
+    },
+    "maxChunks": {
+      "label": "Max Chunks",
+      "help": "How many retrieved document chunks to inject per turn."
+    },
+    "minScore": {
+      "label": "Min Score",
+      "help": "Minimum relevance score for a chunk to be injected."
+    }
+  }
+}
