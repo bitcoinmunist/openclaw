@@ -24,14 +24,37 @@ describe("prepared harness tool environment", () => {
       expected: ["/fixture/policy", "/fixture/system", "/fixture/global"],
     },
     {
-      name: "Gateway shim",
+      name: "Gateway shim without configuration",
+      noGlobalPrepend: true,
+      shim: true,
+      expected: undefined,
+    },
+    {
+      name: "Gateway shim with empty agent override",
       agentPrepend: [],
       shim: true,
-      expected: ["/fixture/cli", "/fixture/system", "/fixture/global"],
+      expected: undefined,
+    },
+    {
+      name: "Gateway shim with blank agent override",
+      agentPrepend: [" ", ""],
+      shim: true,
+      expected: undefined,
+    },
+    {
+      name: "Gateway shim with inherited global prefix",
+      shim: true,
+      expected: ["/fixture/cli", "/fixture/global", "/fixture/system"],
+    },
+    {
+      name: "Gateway shim with agent prefix",
+      agentPrepend: ["/fixture/agent"],
+      shim: true,
+      expected: ["/fixture/cli", "/fixture/agent", "/fixture/system", "/fixture/global"],
     },
   ])(
     "snapshots the $name tool PATH independently of identity",
-    async ({ agentPrepend, sandboxAgentId, shim, expected }) => {
+    async ({ agentPrepend, sandboxAgentId, noGlobalPrepend, shim, expected }) => {
       const merge = vi
         .spyOn(gatewayCliShim, "mergeGatewayAgentCliPath")
         .mockImplementation((configured) => [
@@ -42,7 +65,11 @@ describe("prepared harness tool environment", () => {
       const config: NonNullable<
         Parameters<typeof createAdmittedHostCapabilityTestFixture>[0]["config"]
       > = {
-        tools: { exec: { pathPrepend: [" /fixture/global ", "/fixture/global", ""] } },
+        tools: {
+          exec: noGlobalPrepend
+            ? {}
+            : { pathPrepend: [" /fixture/global ", "/fixture/global", ""] },
+        },
         agents: {
           entries: {
             main: { tools: { exec: agentPrepend ? { pathPrepend: agentPrepend } : {} } },

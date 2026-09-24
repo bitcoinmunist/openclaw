@@ -9,7 +9,7 @@ import { testCodexAppServerBindingStore } from "./session-binding.test-helpers.j
 setupRunAttemptTestHooks();
 
 describe("Codex local tool environment placement", () => {
-  it.each(["local", "websocket", "unix", "proxy", "remote-root", "sandbox"])(
+  it.each(["local", "unconfigured-local", "websocket", "unix", "proxy", "remote-root", "sandbox"])(
     "applies the prepared tool PATH only to owned local execution: %s",
     async (placement) => {
       const params = createParams(
@@ -23,7 +23,7 @@ describe("Codex local tool environment placement", () => {
           credentialScrubEnv: {},
           localIdentityEnv: {},
           managedLocalIdentity: false,
-          localToolEnv,
+          ...(placement === "unconfigured-local" ? {} : { localToolEnv }),
         }),
       };
       if (placement === "sandbox") {

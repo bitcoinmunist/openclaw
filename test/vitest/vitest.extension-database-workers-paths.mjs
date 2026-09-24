@@ -69,6 +69,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/codex/src/app-server/inference-proxy.native.test.ts",
   "extensions/codex/src/app-server/settled-turn-finalizer.native.test.ts",
   "extensions/codex/src/app-server/thread-lifecycle.native.test.ts",
+  "extensions/codex/src/app-server/thread-shell-environment.native.test.ts",
   "extensions/codex/src/app-server/transport-process-registration.test.ts",
   "extensions/codex/src/app-server/transport-process-registration.procfs.test.ts",
   "extensions/codex/src/app-server/transport-startup.test.ts",

@@ -18,19 +18,18 @@ export function prepareAgentHarnessEnvironment(params: {
   sandboxAgentId?: string;
   installationTarget?: InstallationTarget;
 }): ReturnType<NonNullable<AgentHarnessHostCapabilities["preparedEnvironment"]>> {
-  const pathPrepend = normalizePathPrepend(
-    resolveExecToolConfig({
-      cfg: params.config,
-      agentId: params.sandboxAgentId ?? resolveSessionAgentIdStrict(params),
-    }).pathPrepend,
-  );
+  const execConfig = resolveExecToolConfig({
+    cfg: params.config,
+    agentId: params.sandboxAgentId ?? resolveSessionAgentIdStrict(params),
+  });
+  // The automatic CLI shim alone must not change native login-shell defaults.
+  const hasConfiguredPrefix = normalizePathPrepend(execConfig.configuredPathPrepend).length > 0;
   // Capture only tool lookup, not arbitrary host environment or installation custody.
   // SAFETY: findPathKey reads only key names, so optional process.env values are unused.
   const pathKey = findPathKey(process.env as Record<string, string>);
-  const localToolEnv =
-    pathPrepend.length > 0 ? { [pathKey]: process.env[pathKey] ?? "" } : undefined;
+  const localToolEnv = hasConfiguredPrefix ? { [pathKey]: process.env[pathKey] ?? "" } : undefined;
   if (localToolEnv) {
-    applyPathPrepend(localToolEnv, pathPrepend);
+    applyPathPrepend(localToolEnv, normalizePathPrepend(execConfig.pathPrepend));
     Object.freeze(localToolEnv);
   }
   const identity = prepareGitHubToolEnvironment({
