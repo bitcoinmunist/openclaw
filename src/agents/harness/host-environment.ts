@@ -28,8 +28,11 @@ export function prepareAgentHarnessEnvironment(params: {
   // SAFETY: findPathKey reads only key names, so optional process.env values are unused.
   const pathKey = findPathKey(process.env as Record<string, string>);
   const localToolEnv = hasConfiguredPrefix ? { [pathKey]: process.env[pathKey] ?? "" } : undefined;
-  if (localToolEnv) {
-    applyPathPrepend(localToolEnv, normalizePathPrepend(execConfig.pathPrepend));
+  const localToolPathPrepend = hasConfiguredPrefix
+    ? Object.freeze(normalizePathPrepend(execConfig.pathPrepend))
+    : undefined;
+  if (localToolEnv && localToolPathPrepend) {
+    applyPathPrepend(localToolEnv, [...localToolPathPrepend]);
     Object.freeze(localToolEnv);
   }
   const identity = prepareGitHubToolEnvironment({
@@ -43,6 +46,6 @@ export function prepareAgentHarnessEnvironment(params: {
     localIdentityEnv: Object.freeze({ ...identity.localIdentityEnv }),
     managedLocalIdentity: identity.managedLocalIdentity,
     ...(localProcessEnv ? { localProcessEnv } : {}),
-    ...(localToolEnv ? { localToolEnv } : {}),
+    ...(localToolEnv ? { localToolEnv, localToolPathPrepend } : {}),
   });
 }

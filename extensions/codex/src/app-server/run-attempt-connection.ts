@@ -158,6 +158,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     (preparedEnvironment !== undefined &&
       Object.keys(preparedEnvironment.credentialScrubEnv).length > 0);
   let shellEnvironment = baseShellEnvironment;
+  let shellPathPrepend: readonly string[] | undefined;
   let disableLoginShell = baseDisableLoginShell;
   const withPreparedProcessEnv = <T extends CodexAppServerRuntimeOptions>(appServer: T) => {
     // Peer locality is not process ownership: disconnected socket turns can outlive recovery.
@@ -175,6 +176,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
         ? preparedEnvironment?.localToolEnv
         : undefined;
     const hasLocalToolEnv = localToolEnv && Object.keys(localToolEnv).length > 0;
+    shellPathPrepend = hasLocalToolEnv ? preparedEnvironment?.localToolPathPrepend : undefined;
     shellEnvironment = hasLocalToolEnv
       ? { ...baseShellEnvironment, ...localToolEnv }
       : baseShellEnvironment;
@@ -594,6 +596,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       sandbox,
       agentDir,
       shellEnvironment,
+      shellPathPrepend,
       disableLoginShell,
       bindingIdentity,
       bindingStore,

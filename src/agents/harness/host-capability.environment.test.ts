@@ -91,10 +91,14 @@ describe("prepared harness tool environment", () => {
         expect(environment?.localToolEnv).toEqual(
           expected ? { PATH: expected.join(path.delimiter) } : undefined,
         );
+        expect(environment?.localToolPathPrepend).toEqual(
+          expected ? expected.slice(0, expected.indexOf("/fixture/system")) : undefined,
+        );
         expect(environment?.localProcessEnv).toBeUndefined();
         expect(environment?.localIdentityEnv).toEqual({});
         if (expected) {
           expect(Object.isFrozen(environment?.localToolEnv)).toBe(true);
+          expect(Object.isFrozen(environment?.localToolPathPrepend)).toBe(true);
         }
         host.closeHost();
         expect(() => host.hostCapabilities.preparedEnvironment?.()).toThrow("no longer active");

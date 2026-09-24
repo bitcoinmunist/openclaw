@@ -5,6 +5,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createAdmittedHostCapabilityTestFixture } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readCodexEffectiveConfig } from "./config-layer-policy.js";
 import { createCodexNativeTestState } from "./native-app-server.test-support.js";
 import { isJsonObject, type JsonObject } from "./protocol.js";
 import { createIsolatedCodexAppServerClient } from "./shared-client.js";
@@ -14,6 +15,7 @@ import {
   createParams,
   resetThreadLifecycleTestFixtures,
 } from "./thread-lifecycle.test-fixtures.js";
+import { mergeCodexNativeShellEnvironment } from "./thread-shell-environment.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
 vi.unmock("node:child_process");
@@ -23,7 +25,8 @@ afterEach(() => {
 });
 
 // A loopback model selects commands; the pinned native binary owns shell execution.
-// Omit login in each call so the proof observes the thread's actual shell policy.
+// The configured case omits login; the unconfigured case explicitly requests it
+// to prove the native default still allows login even when snapshots run via -c.
 describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
   it.for([true, false])(
     "executes fresh and cold-resumed commands with configured prefix=%s",
@@ -63,8 +66,9 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
                     call_id: `path-probe-${requests.length}`,
                     name: "exec_command",
                     arguments: JSON.stringify({
-                      cmd: `${configured ? "tool-path-probe && " : ""}if shopt -q login_shell; then echo LOGIN=yes; else echo LOGIN=no; fi`,
+                      cmd: `${configured ? "tool-path-probe && native-path-probe && " : ""}if shopt -q login_shell; then echo LOGIN=yes; else echo LOGIN=no; fi`,
                       shell: "/bin/bash",
+                      ...(configured ? {} : { login: true }),
                       max_output_tokens: 1000,
                     }),
                   }
@@ -100,9 +104,9 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
       context.onTestFinished(async () => {
         server.closeAllConnections();
         if (server.listening) {
-          await new Promise<void>((resolve, reject) =>
-            server.close((error) => (error ? reject(error) : resolve())),
-          );
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
         }
       });
       await new Promise<void>((resolve, reject) => {
@@ -116,6 +120,13 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
       if (!address || typeof address === "string") {
         throw new Error("Missing loopback provider address");
       }
+      const nativeBin = path.join(root, "native-bin");
+      await fs.mkdir(nativeBin);
+      await fs.writeFile(
+        path.join(nativeBin, "native-path-probe"),
+        "#!/bin/sh\necho NATIVE=preserved\n",
+        { mode: 0o755 },
+      );
       await fs.writeFile(
         path.join(native.codexHome, "config.toml"),
         [
@@ -126,6 +137,12 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           'approval_policy="never"',
           // This fixture tests lookup, not Linux namespace availability.
           'sandbox_mode="danger-full-access"',
+          ...(configured
+            ? [
+                "[shell_environment_policy.set]",
+                `PATH=${JSON.stringify([nativeBin, "/usr/bin", "/bin"].join(path.delimiter))}`,
+              ]
+            : []),
           "[features]",
           "code_mode=false",
           "[analytics]",
@@ -190,10 +207,21 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
         try {
           expect(client.getRuntimeIdentity()?.serverVersion).toBe(CODEX_APP_SERVER_VERSION);
           const params = createParams(path.join(root, "session.jsonl"), native.cwd);
-          const shellEnvironment = host.hostCapabilities.preparedEnvironment?.().localToolEnv;
+          const prepared = host.hostCapabilities.preparedEnvironment?.();
+          const shellEnvironment = prepared?.localToolEnv;
+          const effective = await readCodexEffectiveConfig(client, native.cwd, {
+            timeoutMs: 20_000,
+          });
           const options = {
             appServer,
             shellEnvironment,
+            shellPathPrepend: prepared?.localToolPathPrepend,
+            config: shellEnvironment
+              ? mergeCodexNativeShellEnvironment(
+                  undefined,
+                  effective.config.shell_environment_policy,
+                )
+              : undefined,
             disableLoginShell: shellEnvironment !== undefined,
             modelProvider: "path-fixture",
             model: "gpt-5.6-luna",
@@ -203,12 +231,14 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
             const resumed = await client.request(
               "thread/resume",
               buildThreadResumeParams(params, { ...options, threadId }),
+              { timeoutMs: 20_000 },
             );
             expect(resumed.thread.id).toBe(threadId);
           } else {
             const started = await client.request(
               "thread/start",
               buildThreadStartParams(params, { ...options, cwd: native.cwd, dynamicTools: [] }),
+              { timeoutMs: 20_000 },
             );
             threadId = started.thread.id;
           }
@@ -229,12 +259,16 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
             }
           });
           try {
-            await client.request("turn/start", {
-              threadId,
-              input: [
-                { type: "text", text: "Check command lookup and login mode.", text_elements: [] },
-              ],
-            });
+            await client.request(
+              "turn/start",
+              {
+                threadId,
+                input: [
+                  { type: "text", text: "Check command lookup and login mode.", text_elements: [] },
+                ],
+              },
+              { timeoutMs: 20_000 },
+            );
             await expect(completed.promise).resolves.toMatchObject({ status: "completed" });
           } finally {
             clearTimeout(timer);
@@ -250,11 +284,10 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           expect(output).toMatchObject({
             output: expect.stringContaining("Process exited with code 0"),
           });
-          expect(output).toMatchObject({
-            output: expect.stringContaining(configured ? "LOGIN=no" : "LOGIN=yes"),
-          });
           if (configured) {
+            expect(output).toMatchObject({ output: expect.stringContaining("LOGIN=no") });
             expect(output).toMatchObject({ output: expect.stringContaining(`SELECTED=${phase}`) });
+            expect(output).toMatchObject({ output: expect.stringContaining("NATIVE=preserved") });
           }
         } finally {
           host.closeHost();

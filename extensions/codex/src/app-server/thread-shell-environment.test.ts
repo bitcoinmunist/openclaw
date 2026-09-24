@@ -1,12 +1,112 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { mergeCodexThreadConfigs } from "./plugin-thread-config.js";
 import { isJsonObject, type JsonObject } from "./protocol.js";
 import { buildThreadStartParams, buildThreadResumeParams } from "./thread-lifecycle.js";
 import {
   createThreadRequestAppServerOptions as createAppServerOptions,
   createThreadRequestAttemptParams as createAttemptParams,
 } from "./thread-lifecycle.test-fixtures.js";
+import {
+  applyCodexManagedShellEnvironment,
+  mergeCodexNativeShellEnvironment,
+} from "./thread-shell-environment.js";
 
 describe("Codex managed shell environment", () => {
+  it("omits native absent policy fields instead of sending null TOML overrides", () => {
+    expect(
+      mergeCodexNativeShellEnvironment(undefined, {
+        inherit: null,
+        ignore_default_excludes: null,
+        exclude: null,
+        include_only: null,
+        filters: null,
+        experimental_use_profile: null,
+        set: { PATH: "" },
+      }),
+    ).toEqual({ shell_environment_policy: { set: { PATH: "" } } });
+  });
+
+  it.each(["/native/bin", ""])(
+    "respects platform PATH casing for native value %s",
+    (nativePath) => {
+      const result = applyCodexManagedShellEnvironment(
+        { shell_environment_policy: { set: { PATH: nativePath } } },
+        { Path: ["/tools", "/gateway/bin"].join(path.delimiter) },
+        true,
+        ["/tools"],
+      );
+      const merged = ["/tools", ...(nativePath ? [nativePath] : [])].join(path.delimiter);
+      expect(result.shell_environment_policy).toMatchObject({
+        set:
+          process.platform === "win32"
+            ? { PATH: merged, Path: merged }
+            : { PATH: nativePath, Path: ["/tools", "/gateway/bin"].join(path.delimiter) },
+      });
+    },
+  );
+
+  it.each([
+    { label: "native", nativePath: "/native/bin", expected: "/native/bin" },
+    { label: "empty native", nativePath: "", expected: "" },
+    { label: "inherited", expected: "/gateway/bin" },
+    {
+      label: "request",
+      nativePath: "/native/bin",
+      requestPath: "/request/bin",
+      expected: "/request/bin",
+    },
+    { label: "empty request", nativePath: "/native/bin", requestPath: "", expected: "" },
+  ])(
+    "prepends to the $label PATH without replacing its base",
+    ({ nativePath, requestPath, expected }) => {
+      const config = mergeCodexNativeShellEnvironment(
+        requestPath === undefined
+          ? undefined
+          : { "shell_environment_policy.set.PATH": requestPath },
+        {
+          inherit: "none",
+          set: {
+            ...(nativePath === undefined ? {} : { PATH: nativePath }),
+            KEEP: "yes",
+            GH_TOKEN: "fixture",
+          },
+        },
+      );
+      const result = applyCodexManagedShellEnvironment(
+        config ?? {},
+        { PATH: ["/tools", "/gateway/bin"].join(path.delimiter), GH_TOKEN: "" },
+        true,
+        ["/tools"],
+      );
+      expect(result.shell_environment_policy).toMatchObject({
+        inherit: "none",
+        set: {
+          PATH: ["/tools", ...(expected ? [expected] : [])].join(path.delimiter),
+          KEEP: "yes",
+          GH_TOKEN: "",
+        },
+      });
+      expect(Object.hasOwn(result, "shell_environment_policy.set.PATH")).toBe(false);
+      expect(
+        applyCodexManagedShellEnvironment(
+          result,
+          { PATH: ["/tools", "/gateway/bin"].join(path.delimiter), GH_TOKEN: "" },
+          true,
+          ["/tools"],
+        ),
+      ).toEqual(result);
+    },
+  );
+
+  it("merges dotted policy patches at their original precedence before the host overlay", () => {
+    const config = mergeCodexThreadConfigs(
+      { "shell_environment_policy.set.PATH": "/old", "shell_environment_policy.set.KEEP": "yes" },
+      { shell_environment_policy: { set: { PATH: "/new" } } },
+    );
+    expect(config).toEqual({ shell_environment_policy: { set: { PATH: "/new", KEEP: "yes" } } });
+  });
+
   it.each([
     { action: "start" as const, inherit: "none" },
     { action: "resume" as const, inherit: "core" },
@@ -36,6 +136,7 @@ describe("Codex managed shell environment", () => {
           OPENCLAW_WORKSPACE_DIR: "/fixture/default-workspace",
         },
         disableLoginShell: true,
+        shellPathPrepend: ["/host-tools"],
       };
       const request =
         action === "start"
@@ -58,7 +159,7 @@ describe("Codex managed shell environment", () => {
         experimental_use_profile: false,
         exclude: ["GIT_*"],
         set: {
-          PATH: "/host-tools:/usr/bin",
+          PATH: ["/host-tools", "/user-selected/bin"].join(path.delimiter),
           GH_CONFIG_DIR: "/host-selected",
           KEEP_ME: "yes",
           GH_TOKEN: "",
