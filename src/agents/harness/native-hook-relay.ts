@@ -644,6 +644,13 @@ export const testing = {
   getNativeHookRelayRegistrationForTests(relayId: string): NativeHookRelayRegistration | undefined {
     return relays.get(relayId);
   },
+  getNativeHookRelayBridgeDirForTests(): string {
+    throw new Error("native hook relay bridge files were retired");
+  },
+  getNativeHookRelayBridgeRegistryPathForTests(relayId: string): string {
+    void relayId;
+    throw new Error("native hook relay bridge files were retired");
+  },
   async getNativeHookRelayBridgeRecordForTests(
     relayId: string,
   ): Promise<Record<string, unknown> | undefined> {
