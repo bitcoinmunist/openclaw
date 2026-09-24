@@ -20,6 +20,10 @@ Histórico: branch `local/v2026.6.5` preservada com os 4 commits originais
 
 Snapshot: `~/openclaw-local-patches.diff` (= `git diff v2026.9.6 HEAD`).
 
+Backup remoto da branch: fork `bitcoinmunist/openclaw` (remote `fork`) — após
+commitar patches/docs, `git push fork local/v2026.9.6`. O `origin` é o upstream
+(openclaw/openclaw, read-only).
+
 ## WhatsApp é plugin externo (não-bundled)
 Trust de `openKeyedStore` vem do install record em `~/.openclaw/state/openclaw.sqlite`
 (tabela `installed_plugin_index`). Telegram é bundled. Credenciais WhatsApp (sessão)
