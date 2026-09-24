@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { logTailContains, readLogTail } from "../../scripts/e2e/lib/onboard/log-contains.mjs";
+import {
+  logContains,
+  logTailContains,
+  readLogTail,
+} from "../../scripts/e2e/lib/onboard/log-contains.mjs";
 
 const SCRIPT_PATH = "scripts/e2e/lib/onboard/log-contains.mjs";
 
@@ -45,6 +49,22 @@ describe("onboard log-contains helper", () => {
     );
 
     expect(logTailContains(logPath, "What should we call your first agent?")).toBe(true);
+  });
+
+  it("finds a prompt before more than one terminal window of later output", () => {
+    const logPath = writeLog(
+      `Model/\u001b[36mauth\u001b[0m\n provider${"x".repeat(2 * 1_048_576)}`,
+    );
+
+    expect(logTailContains(logPath, "Model/auth provider")).toBe(false);
+    expect(logContains(logPath, "Model/auth provider")).toBe(true);
+  });
+
+  it("preserves split UTF-8 prompt text", () => {
+    const logPath = writeLog(`${"x".repeat(65_535)}é prompt${"x".repeat(1_048_576)}`);
+
+    expect(logContains(logPath, "é prompt")).toBe(true);
+    expect(logContains(logPath, "z")).toBe(false);
   });
 
   it("preserves CLI status behavior for matching and missing logs", () => {
