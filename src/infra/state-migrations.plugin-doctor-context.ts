@@ -35,7 +35,10 @@ import type {
   PluginDoctorStateMigrationContext,
 } from "../plugins/doctor-contract-module.js";
 import { normalizeAgentId } from "../routing/session-key.js";
-import { readDeferredPluginSessionImport } from "./deferred-plugin-session-sources.js";
+import {
+  readDeferredPluginSessionImport,
+  resolveVerifiedSessionSource,
+} from "./deferred-plugin-session-sources.js";
 import { readSessionStoreJson5 } from "./state-migrations.fs.js";
 import type { PluginDoctorRepairAuthority } from "./state-migrations.types.js";
 
@@ -59,10 +62,11 @@ function hasUnimportedSessionIdentity(params: {
     env: params.env,
   });
   const defaultStore = resolveSessionStorePathCore(undefined, { agentId, env: params.env });
+  const legacyRootStore = path.join(resolveStateDir(params.env), "sessions", "sessions.json");
   const sources = new Map([
     [configuredStore, configuredStore],
     [defaultStore, defaultStore],
-    [path.join(resolveStateDir(params.env), "sessions", "sessions.json"), configuredStore],
+    [legacyRootStore, configuredStore],
   ]);
   let importedIdentity = false;
   let unimportedIdentity = false;
@@ -76,17 +80,30 @@ function hasUnimportedSessionIdentity(params: {
       const before = fs.statSync(storePath, { throwIfNoEntry: false, bigint: true });
       sourceEvidence = { imported: false, sessionIds: new Set() };
       if (before) {
+        const sqlitePath = resolveSqliteTargetFromSessionStorePath(destination, {
+          agentId,
+          env: params.env,
+        }).path;
         const receipt = readDeferredPluginSessionImport({
+          cfg: params.config,
           target: {
             agentId,
             storePath,
-            sqlitePath: resolveSqliteTargetFromSessionStorePath(destination, {
-              agentId,
-              env: params.env,
-            }).path,
+            ...(storePath === legacyRootStore ? { sqlitePath } : {}),
           },
+          sqlitePath,
           env: params.env,
+          purpose: "canonical",
         });
+        if (receipt) {
+          const index = receipt.sources.find((source) => source.path === path.resolve(storePath));
+          if (
+            !index ||
+            !resolveVerifiedSessionSource(index, { agentId, storePath, sqlitePath }, params.env)
+          ) {
+            throw new Error(`Retained plugin session index requires Doctor repair: ${storePath}`);
+          }
+        }
         const parsed = readSessionStoreJson5(storePath);
         const after = fs.statSync(storePath, { throwIfNoEntry: false, bigint: true });
         if (
@@ -191,8 +208,6 @@ function resolveDoctorSessionIdentityEvidence(params: {
     ) {
       return { ...request, state: "unknown" };
     }
-    // Raw sources remain authoritative until their canonical import was verified.
-    // Receipt conflicts propagate; they cannot authorize either deletion or fallback creation.
     const unimported =
       current.length === 0 &&
       hasUnimportedSessionIdentity({

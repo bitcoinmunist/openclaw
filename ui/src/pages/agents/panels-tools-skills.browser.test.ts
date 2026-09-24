@@ -1,12 +1,34 @@
 // Control UI tests cover agents panels tools skills behavior.
 import { render } from "lit";
 import { assert, describe, expect, it, vi } from "vitest";
-import type { SkillStatusEntry } from "../../api/types.ts";
+import type { ToolsEffectiveResult } from "../../api/types.ts";
 import { GitHubIdentityController } from "../../features/github-connections/github-identity-controller.ts";
 import { installBrowserHistoryIsolation } from "../../test-helpers/browser-history.ts";
-import { renderAgentSkills, renderAgentTools } from "./panels-tools-skills.ts";
+import { renderAgentTools } from "./panels-tools-skills.ts";
 
 installBrowserHistoryIsolation();
+
+const toolPreview: ToolsEffectiveResult = {
+  agentId: "main",
+  profile: "full",
+  groups: [
+    {
+      id: "core",
+      label: "Built-in tools",
+      source: "core",
+      tools: [
+        {
+          id: "read",
+          label: "read",
+          description: "Read files",
+          rawDescription: "Read files",
+          source: "core",
+        },
+      ],
+    },
+  ],
+  notices: [{ id: "mcp-not-yet-listed", severity: "info", message: "Discovery is incomplete." }],
+};
 
 function createBaseParams(overrides: Partial<Parameters<typeof renderAgentTools>[0]> = {}) {
   const githubIdentity = new GitHubIdentityController({
@@ -55,36 +77,82 @@ function createBaseParams(overrides: Partial<Parameters<typeof renderAgentTools>
   };
 }
 
-function createSkill(
-  name: string,
-  options: { source?: string; bundled?: boolean; blockedByAgentFilter?: boolean } = {},
-): SkillStatusEntry {
-  return {
-    name,
-    description: `${name} skill`,
-    source: options.source ?? "openclaw-managed",
-    bundled: options.bundled ?? false,
-    filePath: `/tmp/skills/${name}/SKILL.md`,
-    baseDir: `/tmp/skills/${name}`,
-    skillKey: name,
-    always: false,
-    disabled: false,
-    blockedByAllowlist: false,
-    blockedByAgentFilter: options.blockedByAgentFilter ?? false,
-    eligible: true,
-    platformIncompatible: false,
-    modelVisible: !options.blockedByAgentFilter,
-    userInvocable: true,
-    commandVisible: !options.blockedByAgentFilter,
-    requirements: { bins: [], anyBins: [], env: [], config: [], os: [] },
-    missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
-    configChecks: [],
-    install: [],
-  };
-}
-
 describe("agents tools panel (browser)", () => {
-  it("renders catalog provenance and effective runtime tools", async () => {
+  it.each([
+    { name: "not requested", overrides: {}, status: "Not loaded" },
+    { name: "loading", overrides: { toolsEffectiveLoading: true }, status: "Loading…" },
+    {
+      name: "failed",
+      overrides: { toolsEffectiveError: "request failed" },
+      status: "Unavailable",
+    },
+    {
+      name: "another agent",
+      overrides: { runtimeSessionMatchesSelectedAgent: false, toolsEffectiveResult: toolPreview },
+      status: "Other Agent",
+    },
+    {
+      name: "refreshing stale",
+      overrides: { toolsEffectiveLoading: true, toolsEffectiveResult: toolPreview },
+      status: "Loading…",
+    },
+    {
+      name: "failed stale",
+      overrides: { toolsEffectiveError: "request failed", toolsEffectiveResult: toolPreview },
+      status: "Unavailable",
+    },
+  ])("does not treat a $name preview as zero tools or denied access", ({ overrides, status }) => {
+    const container = document.createElement("div");
+    render(renderAgentTools(createBaseParams(overrides)), container);
+
+    expect(container.querySelectorAll(".settings-kv dd")[3]?.textContent?.trim()).toBe(status);
+    expect(container.querySelector(".agent-tools-runtime-chip")).toBeNull();
+    expect(container.querySelector(".agent-tools-notices")).toBeNull();
+    const row = container.querySelector(".agent-tool-card");
+    expect(row?.querySelectorAll(".agent-tool-summary__fact dd")[1]?.textContent?.trim()).toBe(
+      status,
+    );
+    expect(row?.textContent).not.toContain("Not Live");
+    expect(row?.textContent).not.toContain("Not available in this chat session");
+  });
+
+  it("distinguishes missing preview entries from disabled tools and an empty result", () => {
+    const container = document.createElement("div");
+    const params = createBaseParams({ toolsEffectiveResult: toolPreview });
+    render(renderAgentTools(params), container);
+
+    const included = container.querySelector("#agent-tool-read");
+    const absent = container.querySelector("#agent-tool-exec");
+    expect(included?.querySelectorAll(".agent-tool-summary__fact dd")[1]?.textContent?.trim()).toBe(
+      "Included in preview",
+    );
+    expect(included?.textContent).toContain("Listed in preview via Built-In.");
+    expect(absent?.querySelectorAll(".agent-tool-summary__fact dd")[1]?.textContent?.trim()).toBe(
+      "Not listed",
+    );
+    expect(absent?.querySelector<HTMLElement & { checked: boolean }>("wa-switch")?.checked).toBe(
+      true,
+    );
+    expect(container.querySelector(".agent-tools-group__counts")?.textContent).toContain(
+      "1 Listed Tool",
+    );
+
+    render(
+      renderAgentTools({
+        ...params,
+        toolsEffectiveResult: {
+          ...toolPreview,
+          groups: [{ id: "core", label: "Built-in tools", source: "core", tools: [] }],
+        },
+      }),
+      container,
+    );
+    expect(container.querySelectorAll(".settings-kv dd")[3]?.textContent?.trim()).toBe("0");
+    expect(container.textContent).toContain("No tools are listed in this preview.");
+    expect(container.querySelector(".agent-tools-runtime-chip")).toBeNull();
+  });
+
+  it("renders catalog provenance and a prospective tool preview", async () => {
     const container = document.createElement("div");
     render(
       renderAgentTools(
@@ -177,10 +245,16 @@ describe("agents tools panel (browser)", () => {
       Array.from(container.querySelectorAll(".settings-section__heading")).map((heading) =>
         heading.textContent?.trim(),
       ),
-    ).toEqual(["Tool Access", "Available Right Now", "GitHub account", "Tool Catalog"]);
+    ).toEqual(["Tool access", "Tool preview", "GitHub account", "Tool Catalog"]);
+    expect(container.querySelectorAll(".settings-kv dd")[3]?.textContent?.trim()).toBe("2");
+    expect(container.textContent).toContain(
+      "Based on saved session settings and discovered tools.",
+    );
+    expect(container.textContent).toContain("additional tools may become available");
+    expect(container.textContent).toContain("unsaved edits are not included");
     expect(
       Array.from(container.querySelectorAll(".settings-row__title")).some(
-        (title) => title.textContent?.trim() === "Quick Presets",
+        (title) => title.textContent?.trim() === "Tool Presets",
       ),
     ).toBe(true);
     const runtimeChips = Array.from(container.querySelectorAll(".agent-tools-runtime-chip")).map(
@@ -260,6 +334,7 @@ describe("agents tools panel (browser)", () => {
     expect(section.querySelector(".settings-segmented")).toBeNull();
     expect(section.querySelector(".settings-secret input")).toBeNull();
     expect(section.textContent).toContain("Manage connections in Profile");
+    expect(section.textContent).not.toContain("OS account running the Gateway");
     expect(section.textContent).not.toContain("Advanced: agent GitHub override");
   });
 
@@ -339,6 +414,7 @@ describe("agents tools panel (browser)", () => {
     expect(container.textContent).toContain("Managed GitHub authorization");
     expect(container.textContent).toContain("repo, workflow");
     expect(container.textContent).toContain("System GitHub");
+    expect(container.textContent).not.toContain("OS account running the Gateway");
   });
 
   it("keeps PAT fields hidden until the explicit fallback is selected", async () => {
@@ -398,6 +474,52 @@ describe("agents tools panel (browser)", () => {
     expect(container.querySelector(".callout.info")?.textContent?.trim()).toBe(
       "Could not load runtime tool catalog. Showing built-in fallback list instead.",
     );
+  });
+
+  it("enables the fallback setup helper without selecting Full", async () => {
+    const container = document.createElement("div");
+    const onOverridesChange = vi.fn();
+    const onProfileChange = vi.fn();
+    render(
+      renderAgentTools(
+        createBaseParams({
+          configForm: { agents: { entries: { main: { tools: { profile: "coding" } } } } },
+          toolsCatalogResult: null,
+          onOverridesChange,
+          onProfileChange,
+        }),
+      ),
+      container,
+    );
+    await Promise.resolve();
+
+    expect(container.textContent).toContain(
+      "Full selects tools; it does not grant Full Access execution permissions.",
+    );
+    const card = Array.from(container.querySelectorAll(".agent-tool-card")).find(
+      (entry) => entry.querySelector(".agent-tool-title")?.textContent?.trim() === "openclaw",
+    );
+    const toggle = card?.querySelector<HTMLElement & { checked: boolean }>("wa-switch");
+    assert(toggle, "Missing setup helper switch");
+    expect(toggle.checked).toBe(false);
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onOverridesChange).toHaveBeenCalledExactlyOnceWith("main", ["openclaw"], []);
+    expect(onProfileChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps Inherit separate from the explicit Full profile", async () => {
+    const container = document.createElement("div");
+    const onProfileChange = vi.fn();
+    render(renderAgentTools(createBaseParams({ onProfileChange })), container);
+    await Promise.resolve();
+
+    const inherit = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Inherit",
+    );
+    assert(inherit, "Missing Inherit control");
+    inherit.click();
+    expect(onProfileChange).toHaveBeenCalledExactlyOnceWith("main", null, false);
   });
 
   it("renders effective tool notices", async () => {
@@ -561,7 +683,7 @@ describe("agents tools panel (browser)", () => {
       { label: "Access", value: "Enabled by the current profile." },
       { label: "Source", value: "Plugin: voice-call" },
       { label: "Default Presets", value: "full" },
-      { label: "Current Session", value: "Not available in this chat session right now." },
+      { label: "Tool preview", value: "Not loaded" },
     ]);
   });
 
@@ -846,208 +968,5 @@ describe("agents tools panel (browser)", () => {
         ]),
       ),
     ).toEqual(expected);
-  });
-});
-
-describe("agents skills panel (browser)", () => {
-  it("shows matches from default-collapsed groups while filtering", async () => {
-    const container = document.createElement("div");
-    const params: Parameters<typeof renderAgentSkills>[0] = {
-      agentId: "main",
-      canPatchConfig: true,
-      canUpdateConfig: true,
-      report: {
-        workspaceDir: "/tmp/workspace",
-        managedSkillsDir: "/tmp/skills",
-        agentId: "main",
-        skills: [
-          createSkill("Unique Built In Match", {
-            source: "openclaw-bundled",
-            bundled: true,
-          }),
-          createSkill("Installed Distractor"),
-        ],
-      },
-      loading: false,
-      error: null,
-      activeAgentId: "main",
-      configForm: { agents: { entries: { main: { default: true } } } },
-      configLoading: false,
-      configSaving: false,
-      configDirty: false,
-      filter: "",
-      onFilterChange: () => undefined,
-      onRefresh: () => undefined,
-      onToggle: () => undefined,
-      onClear: () => undefined,
-      onDisableAll: () => undefined,
-      onConfigReload: () => undefined,
-      onConfigSave: () => undefined,
-    };
-
-    render(renderAgentSkills(params), container);
-    await Promise.resolve();
-    const builtInGroup = container.querySelector<HTMLDetailsElement>(".agent-skills-group");
-    expect(builtInGroup?.open).toBe(false);
-
-    render(renderAgentSkills({ ...params, filter: "Unique Built In Match" }), container);
-    await Promise.resolve();
-    const filteredGroup = container.querySelector<HTMLDetailsElement>(".agent-skills-group");
-    expect(container.textContent).toContain("1 shown");
-    expect(filteredGroup?.open).toBe(true);
-    expect(filteredGroup?.querySelector(".agent-skill-row")?.textContent).toContain(
-      "Unique Built In Match",
-    );
-  });
-
-  it("reflects an inherited default skill allowlist", async () => {
-    const container = document.createElement("div");
-
-    render(
-      renderAgentSkills({
-        agentId: "main",
-        canPatchConfig: true,
-        canUpdateConfig: true,
-        report: {
-          workspaceDir: "/tmp/workspace",
-          managedSkillsDir: "/tmp/skills",
-          agentId: "main",
-          agentSkillFilter: ["github"],
-          skills: [createSkill("github"), createSkill("weather", { blockedByAgentFilter: true })],
-        },
-        loading: false,
-        error: null,
-        activeAgentId: "main",
-        configForm: {
-          agents: {
-            defaults: { skills: ["github"] },
-            entries: { main: { default: true } },
-          },
-        },
-        configLoading: false,
-        configSaving: false,
-        configDirty: false,
-        filter: "",
-        onFilterChange: () => undefined,
-        onRefresh: () => undefined,
-        onToggle: () => undefined,
-        onClear: () => undefined,
-        onDisableAll: () => undefined,
-        onConfigReload: () => undefined,
-        onConfigSave: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(container.querySelector(".callout.info")?.textContent).toContain(
-      "inherits the default skill allowlist",
-    );
-    expect(
-      Array.from(container.querySelectorAll<HTMLElement>(".agent-skill-row wa-switch")).map(
-        (toggle) => (toggle as HTMLElement & { checked: boolean }).checked,
-      ),
-    ).toEqual([true, false]);
-    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    expect(buttons[0]?.disabled).toBe(false);
-    expect(buttons[1]?.disabled).toBe(true);
-  });
-
-  it("gates allowlist clearing separately from staged config edits", async () => {
-    const container = document.createElement("div");
-    render(
-      renderAgentSkills({
-        agentId: "main",
-        canPatchConfig: false,
-        canUpdateConfig: true,
-        report: {
-          workspaceDir: "/tmp/workspace",
-          managedSkillsDir: "/tmp/skills",
-          skills: [],
-        },
-        loading: false,
-        error: null,
-        activeAgentId: "main",
-        configForm: { agents: { entries: { main: { skills: ["coding-agent"] } } } },
-        configLoading: false,
-        configSaving: false,
-        configDirty: false,
-        filter: "",
-        onFilterChange: () => undefined,
-        onRefresh: () => undefined,
-        onToggle: () => undefined,
-        onClear: () => undefined,
-        onDisableAll: () => undefined,
-        onConfigReload: () => undefined,
-        onConfigSave: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    expect(buttons[0]?.disabled).toBe(false);
-    expect(buttons[1]?.disabled).toBe(true);
-  });
-
-  it("explains an unsatisfied one-of binary requirement", async () => {
-    const container = document.createElement("div");
-    const skill: SkillStatusEntry = {
-      ...createSkill("coding-agent", { source: "openclaw-bundled", bundled: true }),
-      name: "Coding Agent",
-      description: "Delegate coding work to an available coding CLI.",
-      eligible: false,
-      modelVisible: false,
-      commandVisible: false,
-      requirements: {
-        bins: [],
-        anyBins: ["claude", "codex", "opencode"],
-        env: [],
-        config: [],
-        os: [],
-      },
-      missing: {
-        bins: [],
-        anyBins: ["claude", "codex", "opencode"],
-        env: [],
-        config: [],
-        os: [],
-      },
-      install: [{ id: "node-codex", kind: "node", label: "Install Codex CLI", bins: ["codex"] }],
-    };
-
-    render(
-      renderAgentSkills({
-        agentId: "main",
-        canPatchConfig: true,
-        canUpdateConfig: true,
-        report: {
-          workspaceDir: "/tmp/workspace",
-          managedSkillsDir: "/tmp/skills",
-          skills: [skill],
-        },
-        loading: false,
-        error: null,
-        activeAgentId: "main",
-        configForm: { agents: { entries: { main: { default: true } } } },
-        configLoading: false,
-        configSaving: false,
-        configDirty: false,
-        filter: "",
-        onFilterChange: () => undefined,
-        onRefresh: () => undefined,
-        onToggle: () => undefined,
-        onClear: () => undefined,
-        onDisableAll: () => undefined,
-        onConfigReload: () => undefined,
-        onConfigSave: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(container.querySelector(".agent-skill-row")?.textContent).toContain(
-      "bin:any of (claude, codex, opencode)",
-    );
   });
 });

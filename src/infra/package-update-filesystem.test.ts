@@ -108,18 +108,34 @@ it.runIf(process.platform === "darwin").each([0o700, 0o755])(
   },
 );
 
-it.runIf(process.platform === "darwin")(
-  "keeps the live launcher intact when symlink metadata cannot be preserved",
-  async () => {
+it.runIf(process.platform === "darwin").each([
+  { operation: "lchmod", code: "EPERM", continues: true },
+  { operation: "lchown", code: "EPERM", continues: true },
+  { operation: "lchmod", code: "ENOSYS", continues: true },
+  { operation: "lchmod", code: "EIO", continues: false },
+] as const)(
+  "handles symlink $operation failure $code without following the target",
+  async ({ operation, code, continues }) => {
     const root = dirs.make("package-launcher-metadata-");
     const source = path.join(root, "source");
     const destination = path.join(root, "destination");
     await fs.symlink("missing", source);
     await fs.writeFile(destination, "live launcher");
-    vi.spyOn(fs, "lchmod").mockRejectedValueOnce(new Error("link mode denied"));
+    vi.spyOn(fs, operation).mockRejectedValueOnce(
+      Object.assign(new Error("link metadata denied"), { code }),
+    );
 
-    await expect(copyPackagePathEntry(source, destination)).rejects.toThrow("link mode denied");
-    expect(await fs.readFile(destination, "utf8")).toBe("live launcher");
+    if (continues) {
+      await expect(copyPackagePathEntry(source, destination)).resolves.toEqual({
+        ownershipPreserved: operation !== "lchown",
+      });
+      expect(await fs.readlink(destination)).toBe("missing");
+    } else {
+      await expect(copyPackagePathEntry(source, destination)).rejects.toThrow(
+        "link metadata denied",
+      );
+      expect(await fs.readFile(destination, "utf8")).toBe("live launcher");
+    }
     expect((await fs.readdir(root)).toSorted()).toEqual(["destination", "source"]);
   },
 );
@@ -131,12 +147,13 @@ it("keeps the live launcher intact when its replacement copy is interrupted", as
   await fs.writeFile(source, "previous launcher\n");
   await fs.writeFile(destination, "candidate launcher\n");
   const prototype = Object.getPrototypeOf(await fsSafeRoot(root)) as Root;
-  const copy = vi
-    .spyOn(prototype, "copyIn")
-    .mockImplementationOnce(async function (this: Root, target) {
-      await fs.writeFile(path.join(this.rootReal, target), "partial launcher");
-      throw new Error("interrupted launcher copy");
-    });
+  const copy = vi.spyOn(prototype, "copyIn").mockImplementationOnce(async function (
+    this: Root,
+    target,
+  ) {
+    await fs.writeFile(path.join(this.rootReal, target), "partial launcher");
+    throw new Error("interrupted launcher copy");
+  });
 
   await expect(copyPackagePathEntry(source, destination)).rejects.toThrow(
     "interrupted launcher copy",
@@ -209,13 +226,24 @@ it("keeps the live tree intact and cleans private staging after copy authority c
   await fs.writeFile(path.join(destination, "live.txt"), "live launcher");
   const refused = new Error("copy owner closed");
   let revoked = false;
+  const copied: string[] = [];
   const cleaned: string[] = [];
+  const prototype = Object.getPrototypeOf(await fsSafeRoot(root)) as Root;
+  // oxlint-disable-next-line typescript/unbound-method -- Keep the real copy receiver and authority options.
+  const copy = prototype.copyIn;
+  vi.spyOn(prototype, "copyIn").mockImplementation(async function (
+    this: Root,
+    target,
+    copySource,
+    options,
+  ) {
+    await copy.call(this, target, copySource, options);
+    copied.push(path.basename(target));
+    if (path.basename(target) === "a.txt") {
+      revoked = true;
+    }
+  });
   __setFsSafeTestHooksForTest({
-    afterPinnedWriteFallbackRename(target) {
-      if (path.basename(target) === "a.txt") {
-        revoked = true;
-      }
-    },
     beforeRootFallbackMutation(operation, target) {
       if (operation === "remove") {
         cleaned.push(path.basename(target));
@@ -232,6 +260,7 @@ it("keeps the live tree intact and cleans private staging after copy authority c
   ).rejects.toBe(refused);
 
   expect(revoked).toBe(true);
+  expect(copied).toEqual(["a.txt"]);
   expect(cleaned).toContain("a.txt");
   expect(cleaned).not.toContain("live.txt");
   expect(await fs.readFile(path.join(destination, "live.txt"), "utf8")).toBe("live launcher");
@@ -250,16 +279,19 @@ it("retains the first copy failure when private staging has been replaced", asyn
   const copy = prototype.copyIn;
   const refused = new Error("copy completion refused");
   let replaced = "";
-  vi.spyOn(prototype, "copyIn").mockImplementationOnce(
-    async function (this: Root, target, from, options) {
-      await copy.call(this, target, from, options);
-      replaced = this.rootReal;
-      await fs.rename(replaced, retained);
-      await fs.mkdir(replaced);
-      await fs.writeFile(path.join(replaced, "foreign.txt"), "successor staging");
-      throw refused;
-    },
-  );
+  vi.spyOn(prototype, "copyIn").mockImplementationOnce(async function (
+    this: Root,
+    target,
+    from,
+    options,
+  ) {
+    await copy.call(this, target, from, options);
+    replaced = this.rootReal;
+    await fs.rename(replaced, retained);
+    await fs.mkdir(replaced);
+    await fs.writeFile(path.join(replaced, "foreign.txt"), "successor staging");
+    throw refused;
+  });
 
   await expect(copyPackagePathEntry(source, destination)).rejects.toBe(refused);
 

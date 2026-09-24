@@ -41,6 +41,7 @@ import {
   requestFlowCancel,
   updateFlowRecordByIdExpectedRevision,
 } from "./task-flow-runtime-internal.js";
+import { isOneTaskFlowEligible } from "./task-initial-flow.rules.js";
 import { withTaskRegistryMutation } from "./task-registry-state.js";
 import { summarizeTaskRecords } from "./task-registry.summary.js";
 import type {
@@ -54,17 +55,6 @@ import type {
 export { findTaskByRunId } from "./runtime-internal.js";
 
 const log = createSubsystemLogger("tasks/executor");
-
-// One-task flows give detached ACP/subagent runs a flow handle for status and retry surfaces.
-function isOneTaskFlowEligible(task: TaskRecord): boolean {
-  if (task.parentFlowId?.trim() || task.scopeKind !== "session") {
-    return false;
-  }
-  if (task.deliveryStatus === "not_applicable") {
-    return false;
-  }
-  return task.runtime === "acp" || task.runtime === "subagent";
-}
 
 function ensureSingleTaskFlow(params: {
   task: TaskRecord;
@@ -140,6 +130,7 @@ export function createRunningTaskRunCore(
 
 export function startTaskRunByRunIdCore(params: {
   runId: string;
+  taskId?: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
   startedAt?: number;
@@ -152,12 +143,14 @@ export function startTaskRunByRunIdCore(params: {
 
 export function recordTaskRunProgressByRunIdCore(params: {
   runId: string;
+  taskId?: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
   childSessionKey?: string | null;
   lastEventAt?: number;
   progressSummary?: string | null;
   eventSummary?: string | null;
+  detail?: TaskRecord["detail"];
 }) {
   return recordTaskProgressByRunId(params);
 }

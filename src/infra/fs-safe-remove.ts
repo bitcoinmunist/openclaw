@@ -3,14 +3,12 @@ import "./fs-safe-defaults.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { FsSafeError } from "@openclaw/fs-safe/errors";
 import { root as fsSafeRoot } from "@openclaw/fs-safe/root";
 import { isMissingPathError } from "./errno.js";
 import { retainMutationAuthority } from "./mutation-authority.js";
 
 type PinnedPath = { path: string; stat: BigIntStats };
-const RETRYABLE_REMOVE_ERRORS = new Set(["EBUSY", "EMFILE", "ENFILE", "ENOTEMPTY", "EPERM"]);
 
 function isNotFoundError(error: unknown): boolean {
   return isMissingPathError(error) || isMissingPathError(findMappedFilesystemCause(error));
@@ -102,8 +100,6 @@ export async function removePathWithinRoot(params: {
   assertBeforeMutation?: () => void;
   /** Package trees contain links; unlink their leaves without traversing their targets. */
   symlinks?: "reject" | "unlink";
-  maxRetries?: number;
-  retryDelay?: number;
 }): Promise<void> {
   const assertOwner = retainMutationAuthority(params.assertBeforeMutation ?? (() => {}));
   const assertCurrent = retainMutationAuthority((assertPaths?: () => void) => {
@@ -115,28 +111,19 @@ export async function removePathWithinRoot(params: {
   assertCurrent();
   const suppressNotFound = params.force !== false;
   const run = async <T>(operation: () => Promise<T>, assertReady: () => void): Promise<T> => {
-    for (let attempt = 0; ; attempt++) {
+    assertReady();
+    try {
+      const value = await operation();
       assertReady();
-      try {
-        const value = await operation();
-        assertReady();
-        return value;
-      } catch (error) {
-        // A refused callback may resemble an errno. It must escape before missing
-        // paths, retry delays, or a later successful lease read can hide it.
-        assertReady();
-        if (
-          attempt >= (params.maxRetries ?? 0) ||
-          !RETRYABLE_REMOVE_ERRORS.has(filesystemCode(error) ?? "")
-        ) {
-          throw error;
-        }
-        await delay((attempt + 1) * (params.retryDelay ?? 100));
-      }
+      return value;
+    } catch (error) {
+      // Preserve a refused owner before missing-path handling can hide it.
+      assertReady();
+      throw error;
     }
   };
   // Recursive fs-safe removal inspects sibling names lazily. Pin every sibling
-  // before mutation so later visits and retries cannot adopt replacement objects.
+  // before mutation so later visits cannot adopt replacement objects.
   const removeEntry = async (entry: PinnedPath, parents: readonly PinnedPath[]): Promise<void> => {
     const assertParents = () => assertCurrent(() => parents.forEach(assertPinnedDirectory));
     const inspectEntry = () => {
@@ -166,7 +153,7 @@ export async function removePathWithinRoot(params: {
       if (params.recursive && entry.stat.isDirectory()) {
         const names = (await run(() => root.list(operationPath), assertEntry)).toSorted();
         // Public directory entries use numeric identities. Capture bigint receipts
-        // before awaits, and retain them across retries instead of adopting replacements.
+        // before awaits instead of adopting replacement objects on later visits.
         const children: PinnedPath[] = [];
         for (const name of names) {
           assertEntry();
@@ -184,28 +171,12 @@ export async function removePathWithinRoot(params: {
         }
         assertEntry();
       }
-      await run(async () => {
-        try {
-          // This walk owns link policy and canonical parent pins. An unset leaf
-          // mutation policy permits explicitly admitted links to be unlinked.
-          await root.remove(operationPath, { assertBeforeMutation: assertEntry });
-        } catch (error) {
-          inspectEntry();
-          if (
-            process.platform !== "win32" ||
-            filesystemCode(error) !== "EPERM" ||
-            entry.stat.isSymbolicLink()
-          ) {
-            throw error;
-          }
-          // Preserve Node's Windows read-only-file repair, fencing chmod as well
-          // as unlink. A link must never make its external target writable.
-          assertEntry();
-          await fs.chmod(entry.path, 0o666);
-          assertParents();
-          await root.remove(operationPath, { assertBeforeMutation: assertEntry });
-        }
-      }, assertParents);
+      // Root's native removal owns Windows read-only handling. This walk owns
+      // the admitted link policy and canonical parent pins through that call.
+      await run(
+        () => root.remove(operationPath, { assertBeforeMutation: assertEntry }),
+        assertParents,
+      );
     } catch (error) {
       inspectEntry();
       if (!suppressNotFound || !isNotFoundError(error)) {

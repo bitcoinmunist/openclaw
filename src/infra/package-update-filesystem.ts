@@ -3,14 +3,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "@openclaw/fs-safe/errors";
 import { root as fsSafeRoot } from "@openclaw/fs-safe/root";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hasErrnoCode } from "./errors.js";
 import { isRemovalIoError, removePathWithinRoot } from "./fs-safe-remove.js";
 import { retainMutationAuthority } from "./mutation-authority.js";
-import type { createPackageIntegrityReader } from "./package-update-integrity.js";
+import {
+  type createPackageIntegrityReader,
+  type PackageLauncherFingerprint,
+  packageLauncherDifferences,
+} from "./package-update-integrity.js";
 import type { StagedPackageSwapParams } from "./package-update-swap-contract.js";
 import { movePathWithCopyFallback } from "./replace-file.js";
 
 export const PACKAGE_MANAGER_SWAP_SOURCE_HARDLINKS = "allow" as const;
+const log = createSubsystemLogger("update/package-launchers");
 
 function assertPackagePathIdentity(filePath: string, expected: BigIntStats | undefined): void {
   let current: BigIntStats | undefined;
@@ -119,8 +125,6 @@ export function removePackagePath(target: string, assertCurrent = () => {}): Pro
     force: true,
     symlinks: "unlink",
     assertBeforeMutation: assertOwner,
-    maxRetries: process.platform === "win32" ? 5 : 2,
-    retryDelay: 100,
   });
 }
 
@@ -128,7 +132,7 @@ export async function copyPackagePathEntry(
   source: string,
   destination: string,
   assertCaller = () => {},
-): Promise<void> {
+): Promise<{ ownershipPreserved: boolean }> {
   const assertCurrent = retainMutationAuthority(assertCaller);
   assertCurrent();
   const sourceIdentity = fsSync.lstatSync(source, { bigint: true });
@@ -154,6 +158,7 @@ export async function copyPackagePathEntry(
     assertParent();
     assertPackagePathIdentity(staging, stagingIdentity);
   };
+  let ownershipPreserved = true;
   let failure: { error: unknown } | undefined;
   try {
     const stagedRoot = await fsSafeRoot(staging, { assertBeforeMutation: assertStaging });
@@ -205,11 +210,45 @@ export async function copyPackagePathEntry(
           linkTarget = path.resolve(path.dirname(from), linkTarget);
         }
         await fs.symlink(linkTarget, to);
-        if (process.platform === "darwin") {
-          const linkIdentity = fsSync.lstatSync(to, { bigint: true });
+        assertEntry();
+        const linkIdentity = fsSync.lstatSync(to, { bigint: true });
+        const assertLink = () => {
           assertEntry();
           assertPackagePathIdentity(to, linkIdentity);
-          await fs.lchmod(to, Number(identity.mode));
+        };
+        if (nested) {
+          if (process.platform === "darwin") {
+            assertLink();
+            await fs.lchmod(to, Number(identity.mode));
+            assertLink();
+          }
+        } else {
+          // Launcher metadata is best effort, but must never follow its target.
+          for (const [field, preserve] of [
+            ["ownership", () => fs.lchown(to, Number(identity.uid), Number(identity.gid))],
+            ...(process.platform === "darwin"
+              ? ([["mode", () => fs.lchmod(to, Number(identity.mode))]] as const)
+              : []),
+          ] as const) {
+            assertLink();
+            try {
+              await preserve();
+            } catch (error) {
+              assertLink();
+              if (
+                !["EPERM", "EACCES", "ENOSYS", "ENOTSUP", "EOPNOTSUPP"].some((code) =>
+                  hasErrnoCode(error, code),
+                )
+              ) {
+                throw error;
+              }
+              ownershipPreserved &&= field !== "ownership";
+              log.warn(
+                `Could not preserve launcher symlink ${field} from ${source}; continuing with the copied link`,
+              );
+            }
+            assertLink();
+          }
         }
       } else if (identity.isFile()) {
         await stagedRoot.copyIn(relativePath, from, {
@@ -266,15 +305,17 @@ export async function copyPackagePathEntry(
   if (failure) {
     throw failure.error;
   }
+  return { ownershipPreserved };
 }
 
 export type PackageLauncherBackup = {
   backupDir?: string;
+  failedCopy?: string;
   entries: Array<{
     source: string;
     destination: string;
     backup: string | null;
-    fingerprint?: string;
+    fingerprint?: PackageLauncherFingerprint;
   }>;
 };
 
@@ -319,11 +360,25 @@ export async function capturePackageLaunchers(
         : reader.exists(destination)))
         ? path.join(snapshot.backupDir, entry)
         : null;
-      const fingerprint = backup && !native ? await reader.launcher(destination) : undefined;
+      let fingerprint = backup && !native ? await reader.launcher(destination) : undefined;
       if (backup) {
-        await copyPackagePathEntry(destination, backup);
-        if (!native && (await reader.launcher(backup)) !== fingerprint) {
-          throw new Error(`Package rollback launcher backup changed: ${destination}`);
+        const copied = await copyPackagePathEntry(destination, backup);
+        if (fingerprint) {
+          // Keep failed verification evidence even when activation never starts.
+          snapshot.failedCopy = backup;
+          const actual = await reader.launcher(backup);
+          const differences = packageLauncherDifferences(
+            fingerprint,
+            actual,
+            copied.ownershipPreserved,
+          );
+          if (differences.length > 0) {
+            throw new Error(
+              `Package rollback launcher backup changed: ${destination}; differing fields: ${differences.join(", ")}`,
+            );
+          }
+          snapshot.failedCopy = undefined;
+          fingerprint = actual;
         }
       }
       snapshot.entries.push({
@@ -428,6 +483,19 @@ export async function discardPackageUpdateBackup(
       return `preserved ${label} at ${backupPath}; remove it manually after verifying the installation`;
     }
   }
+}
+
+export async function discardPackageLauncherBackup(
+  snapshot: PackageLauncherBackup,
+  globalRoot: string,
+  assertCurrent?: () => void,
+): Promise<string | null> {
+  if (snapshot.failedCopy) {
+    return `failed copy retained at ${snapshot.failedCopy}; inspect it before retrying`;
+  }
+  return snapshot.backupDir
+    ? await discardPackageUpdateBackup(snapshot.backupDir, "shim backup", globalRoot, assertCurrent)
+    : null;
 }
 
 export async function removePackageUpdatePath(targetPath: string): Promise<boolean> {

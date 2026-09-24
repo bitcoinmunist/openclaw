@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -321,6 +322,7 @@ class GatewaySession(
   private val customHeadersProvider: ((stableId: String) -> Map<String, String>)? = null,
   private val connectTimeoutMs: Long = GATEWAY_CONNECT_TIMEOUT_MS,
   private val webSocketFactory: ((OkHttpClient, Request, WebSocketListener) -> WebSocket)? = null,
+  private val lifecycleDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
   private companion object {
     // Keep connect timeout above observed gateway unauthorized close on lower-end devices.
@@ -391,9 +393,12 @@ class GatewaySession(
     val endpointStableId: String,
     private val isCurrentImpl: () -> Boolean = { true },
     private val commitIfCurrentImpl: ((block: () -> Unit) -> Boolean)? = null,
+    private val advertisedMethods: Set<String> = emptySet(),
     private val requestImpl: suspend (method: String, paramsJson: String?, timeoutMs: Long, withEnqueue: (() -> Unit) -> Unit) -> String,
   ) {
     fun isCurrent(): Boolean = isCurrentImpl()
+
+    fun supportsMethod(method: String): Boolean = method in advertisedMethods
 
     fun commitIfCurrent(block: () -> Unit): Boolean {
       commitIfCurrentImpl?.let { return it(block) }
@@ -490,7 +495,7 @@ class GatewaySession(
           // A replacement cannot start another resolver until the previous transport drains.
           // Bound its visible wait independently of OkHttp's eventual cancellation callback.
           target.cleanupDeadline =
-            scope.launch(Dispatchers.IO) {
+            scope.launch(lifecycleDispatcher) {
               delay(connectTimeoutMs)
               synchronized(notificationLock) {
                 if (synchronized(lifecycleLock) {
@@ -503,7 +508,7 @@ class GatewaySession(
             }
         }
         if (job?.isActive != true) {
-          job = scope.launch(Dispatchers.IO) { runLoop() }
+          job = scope.launch(lifecycleDispatcher) { runLoop() }
         } else {
           reconnectSignal.trySend(Unit)
         }
@@ -538,7 +543,7 @@ class GatewaySession(
       jobToCancel?.cancel()
       val previousCleanup = disconnectTail
       cleanup =
-        scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+        scope.launch(lifecycleDispatcher, start = CoroutineStart.LAZY) {
           previousCleanup?.join()
           jobToCancel?.join()
           connectionToClose?.joinOwnedWork()
@@ -887,6 +892,7 @@ class GatewaySession(
       val conn = readyConnection(expectedEndpointStableId) ?: return@synchronized null
       RequestLease(
         endpointStableId = conn.target.endpoint.stableId,
+        advertisedMethods = conn.advertisedMethods,
         isCurrentImpl = { currentConnection === conn && conn.isReady() },
         commitIfCurrentImpl = { block ->
           synchronized(lifecycleLock) {
@@ -1026,6 +1032,9 @@ class GatewaySession(
   private inner class Connection(
     val target: DesiredConnection,
   ) {
+    var advertisedMethods: Set<String> = emptySet()
+      private set
+
     private val connectionJob = SupervisorJob(scope.coroutineContext[Job])
     private val connectionScope = CoroutineScope(scope.coroutineContext + connectionJob)
     private val state = AtomicReference(ConnectionState.CONNECTING)
@@ -1379,7 +1388,11 @@ class GatewaySession(
 
     fun isReady(): Boolean = state.get() == ConnectionState.READY
 
-    fun markReady(): Boolean = state.compareAndSet(ConnectionState.CONNECTING, ConnectionState.READY)
+    fun markReady(methods: Set<String>?): Boolean {
+      if (!state.compareAndSet(ConnectionState.CONNECTING, ConnectionState.READY)) return false
+      advertisedMethods = methods.orEmpty().toSet()
+      return true
+    }
 
     fun retire(): WebSocket? =
       synchronized(lifecycleLock) {
@@ -2159,7 +2172,7 @@ class GatewaySession(
       val connected = conn.connect()
       synchronized(notificationLock) {
         synchronized(lifecycleLock) {
-          if (currentConnection !== conn || desired !== target || job?.isActive != true || !conn.markReady()) return@withContext
+          if (currentConnection !== conn || desired !== target || job?.isActive != true || !conn.markReady(connected.hello.methods)) return@withContext
           // Ready metadata precedes callbacks; retries requested by a callback remain queued.
           pluginSurfaceUrls = connected.pluginSurfaceUrls
           sessionRouting = connected.sessionRouting

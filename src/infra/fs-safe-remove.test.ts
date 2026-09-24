@@ -316,8 +316,6 @@ describe("removePathWithinRoot", () => {
         relativePath: "tree",
         recursive: true,
         force: true,
-        maxRetries: 2,
-        retryDelay: 0,
         assertBeforeMutation() {
           if (injections === 1 && refusals === 0) {
             refusals += 1;
@@ -591,8 +589,6 @@ describe("removePathWithinRoot", () => {
       relativePath: "tree",
       recursive: true,
       force: true,
-      maxRetries: 2,
-      retryDelay: 0,
       assertBeforeMutation: () => {
         if (armed && refusals === 0) {
           refusals += 1;
@@ -650,12 +646,14 @@ describe("removePathWithinRoot", () => {
   });
 
   it.each(["unchanged", "replaced"] as const)(
-    "retries a real sharing failure only while its captured target remains %s",
+    "preserves a sharing failure without retrying while its captured target remains %s",
     async (targetState) => {
       const root = await tempDirs.make("openclaw-fs-safe-root-");
       const target = path.join(root, "target.txt");
       const retained = path.join(root, "retained.txt");
       await fs.writeFile(target, "original");
+      const identity = await fs.lstat(target, { bigint: true });
+      const sharingFailure = Object.assign(new Error("sharing failure"), { code: "EBUSY" });
       const prototype = Object.getPrototypeOf(await fsSafeRoot(root)) as Root;
       // oxlint-disable-next-line typescript/unbound-method -- Called below with the intercepted Root receiver to preserve its path and mutation authority.
       const remove = prototype.remove;
@@ -667,25 +665,31 @@ describe("removePathWithinRoot", () => {
             await fs.rename(target, retained);
             await fs.writeFile(target, "successor");
           }
-          throw Object.assign(new Error("sharing failure"), { code: "EBUSY" });
+          throw sharingFailure;
         }
         await remove.call(this, entry, options);
       });
       const removal = removePathWithinRoot({
         rootDir: root,
         relativePath: "target.txt",
-        maxRetries: 2,
-        retryDelay: 0,
       });
 
       if (targetState === "unchanged") {
-        await removal;
-        expect(attempts).toBe(2);
-        await expectRejectCode(fs.lstat(target), "ENOENT");
+        await expect(removal).rejects.toBe(sharingFailure);
+        expect(attempts).toBe(1);
+        expect(await fs.lstat(target, { bigint: true })).toMatchObject({
+          dev: identity.dev,
+          ino: identity.ino,
+        });
+        expect(await fs.readFile(target, "utf8")).toBe("original");
       } else {
         await expectRejectCode(removal, "path-mismatch");
         expect(attempts).toBe(1);
         expect(await fs.readFile(target, "utf8")).toBe("successor");
+        expect(await fs.lstat(retained, { bigint: true })).toMatchObject({
+          dev: identity.dev,
+          ino: identity.ino,
+        });
         expect(await fs.readFile(retained, "utf8")).toBe("original");
       }
     },
@@ -775,8 +779,6 @@ describe("removePathWithinRoot", () => {
             rootDir: root,
             relativePath: "held.txt",
             force: false,
-            maxRetries: 1,
-            retryDelay: 0,
           }),
         ).rejects.toMatchObject({ code: "not-removable", cause: { code: "EBUSY" } });
         expect(await fs.lstat(target, { bigint: true })).toMatchObject({

@@ -115,7 +115,10 @@ class ActivityPage extends OpenClawLightDomElement {
       (agents, notify) => agents.subscribe(notify),
     )
     .watch(
-      () => this.context?.liveActivity,
+      () =>
+        (this.routeData ?? this.presentedRoute?.data)?.mode === "live"
+          ? this.context?.liveActivity
+          : null,
       (activity, notify) => activity.subscribe(notify),
       (activity) => {
         const snapshot = activity.snapshot;
@@ -200,7 +203,7 @@ class ActivityPage extends OpenClawLightDomElement {
     if (sourceChanged || gateway.eventLogRevision !== this.sessionActivityRevision) {
       this.sessionActivityRevision = gateway.eventLogRevision;
       this.presentedRoute = undefined;
-      this.sessionActivity.load(null, null);
+      void this.sessionActivity.load(null, null);
     }
     if (sourceChanged || snapshot.client !== this.presenceClient) {
       this.presenceClient = snapshot.client;
@@ -216,7 +219,7 @@ class ActivityPage extends OpenClawLightDomElement {
 
   private syncSessionActivity(reason: "query" | "retry" = "query") {
     const snapshot = this.context?.gateway.snapshot;
-    this.sessionActivity.load(
+    void this.sessionActivity.load(
       snapshot?.phase === "connected" ? snapshot.client : null,
       this.routeData?.mode === "sessions"
         ? this.routeData.filters

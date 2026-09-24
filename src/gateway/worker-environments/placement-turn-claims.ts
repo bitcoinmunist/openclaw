@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
+import { sessionChanges } from "../../sessions/session-row-changes.js";
 import type { DB as StateDatabase } from "../../state/openclaw-state-db.generated.js";
 import {
   advanceCursor,
@@ -26,7 +27,6 @@ import {
   signalWorkerTurnClaimClosed,
   waitersFor,
 } from "./placement-turn-claim-events.js";
-import { clearWorkerWorkspaceReconciliation } from "./placement-workspace-journal.js";
 import { assertSessionWorkspaceUnreserved } from "./placement-workspace-reservation.js";
 import {
   clearWorkerWorkspacePendingResult,
@@ -131,6 +131,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
     if (result.numAffectedRows !== 1n) {
       throw new Error(`Session ${identity.sessionId} placement changed during turn admission`);
     }
+    sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
     return {
       sessionId: current.sessionId,
       claimId,
@@ -213,6 +214,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
         if (result.numAffectedRows !== 1n) {
           throw new Error(`Session ${sessionId} turn claim changed during release`);
         }
+        sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return getRequired(db, sessionId);
       });
       signalWorkerTurnClaimClosed(path, claim);
@@ -262,6 +264,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
         if (result.numAffectedRows !== 1n) {
           throw new Error(`Session ${sessionId} workspace result changed during release`);
         }
+        sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return getRequired(db, sessionId);
       });
       signalWorkerTurnClaimClosed(path, claim);
@@ -342,6 +345,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
         if (result.numAffectedRows !== 1n) {
           throw new Error(`Session ${sessionId} workspace result changed during cancellation`);
         }
+        sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return getRequired(db, sessionId);
       });
       signalWorkerTurnClaimClosed(path, claim);
@@ -450,8 +454,6 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
       claim: WorkerSessionTurnClaim;
       transcript?: number;
       liveEvent?: number;
-      /** @deprecated Workspace result fencing is implied by a live event cursor. */
-      workspaceResultPending?: boolean;
     }): WorkerSessionPlacementRecord {
       const sessionId = required(input.claim.sessionId, "session id");
       const claimId = required(input.claim.claimId, "turn claim id");
@@ -524,6 +526,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
           // fence protecting remote workspace results from stale-claim teardown.
           insertWorkerWorkspacePendingResult(db, input.claim, now(), instanceId);
         }
+        sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return getRequired(db, sessionId);
       });
     },
@@ -622,51 +625,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
             throw new Error(`Worker workspace journal changed for session ${sessionId}`);
           }
         }
-        return getRequired(db, sessionId);
-      });
-    },
-
-    acceptIdleWorkspaceReconciliation(input: {
-      sessionId: string;
-      environmentId: string;
-      ownerEpoch: number;
-      expectedGeneration: number;
-      manifestRef: string;
-    }): WorkerSessionPlacementRecord {
-      const sessionId = required(input.sessionId, "session id");
-      const environmentId = required(input.environmentId, "environment id");
-      const ownerEpoch = normalizeEpoch(input.ownerEpoch, "active owner epoch");
-      const manifestRef = required(input.manifestRef, "workspace base manifest ref");
-      if (!/^sha256:[a-f0-9]{64}$/u.test(manifestRef)) {
-        throw new Error("Worker workspace base manifest reference is invalid");
-      }
-      return write((db) => {
-        const current = getRequired(db, sessionId);
-        if (
-          current.state !== "active" ||
-          current.generation !== input.expectedGeneration ||
-          current.environmentId !== environmentId ||
-          current.activeOwnerEpoch !== ownerEpoch ||
-          current.turnClaim !== null
-        ) {
-          throw new Error(`Cannot accept stale idle worker workspace for session ${sessionId}`);
-        }
-        const result = executeSqliteQuerySync(
-          db,
-          query(db)
-            .updateTable("worker_session_placements")
-            .set({ workspace_base_manifest_ref: manifestRef, updated_at_ms: now() })
-            .where("session_id", "=", sessionId)
-            .where("state", "=", "active")
-            .where("transition_generation", "=", input.expectedGeneration)
-            .where("environment_id", "=", environmentId)
-            .where("active_owner_epoch", "=", ownerEpoch)
-            .where("turn_claim_owner", "is", null),
-        );
-        if (result.numAffectedRows !== 1n) {
-          throw new Error(`Worker session workspace ${sessionId} changed during reconciliation`);
-        }
-        clearWorkerWorkspaceReconciliation(db, sessionId);
+        sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return getRequired(db, sessionId);
       });
     },
