@@ -71,9 +71,12 @@ plugin/baileys ANTIGOS; logs se perderam no recreate do container). Desde 13/set
 ~150/dia; **0 criados após o update de 24/set** (plugin 2026.9.4 + baileys novo, com
 `lib/Utils/pre-key-manager.js` — processa deleções do protocolo mas não poda antigos).
 Frequência de restart é o que dispara re-upload (938 no dia do update).
-Limpeza proposta (NÃO executada): stash de `pre-key-*.json` >14 dias (~150k, reversível)
-+ monitorar "decrypt" nos logs por 7 dias. NUNCA apagar `creds.json`, `session-*`,
-`identity*`, `sender-key-*` (não casam com o padrão `pre-key-*.json`).
+Limpeza EXECUTADA 2026-09-24: stash reversível em
+`~/.openclaw-backups/prekeys-stash-20260924/` (118.161 arquivos >14 dias; sessão foi
+703MB→241MB, gateway sem nenhum erro de decrypt pós-move). **Só apagar o stash após
+7+ dias sem erros de decrypt** (`docker logs ... | grep -i decrypt`). Restauração:
+instruções no README-restaurar.txt dentro do stash. NUNCA apagar `creds.json`,
+`session-*`, `identity*`, `sender-key-*` (não casam com o padrão `pre-key-*.json`).
 
 ## Segredos (SecretRefs — migrado 2026-09-24)
 `gateway.auth.token`, `channels.telegram.botToken` e o auth profile
