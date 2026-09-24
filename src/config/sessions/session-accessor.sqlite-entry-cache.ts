@@ -25,6 +25,10 @@ import {
   type SessionEntryCacheDatabase,
   type SessionEntrySideMetadata,
 } from "./session-accessor.sqlite-entry-cache-projection.js";
+import {
+  sessionEntryCaches,
+  type SqliteSessionEntryCache,
+} from "./session-accessor.sqlite-entry-cache-state.js";
 import type {
   SessionEntryCacheReadOptions,
   SessionEntryCacheSnapshot,
@@ -47,12 +51,10 @@ import {
   cacheValidityTokensEqual,
   readSessionEntryCacheValidityToken,
   readSessionNodesGeneration,
-  type SqliteSessionEntryRevision,
 } from "./session-accessor.sqlite-entry-revision.js";
 import { readSqliteSessionParticipantProjection } from "./session-accessor.sqlite-participant-projection.js";
 import type { SessionEntryReadScope } from "./session-accessor.types.js";
 import { assertCanonicalSqliteSessionKeysCurrent } from "./session-canonical-key.js";
-import type { SessionParticipantProjection } from "./session-membership-facts.types.js";
 import { listSessionMembersInDatabase } from "./session-sharing-store.kernel.js";
 import type { InternalSessionEntry, SessionEntry } from "./types.js";
 
@@ -66,22 +68,10 @@ export {
 
 type SessionEntryCacheTables = Pick<OpenClawAgentKyselyDatabase, "session_nodes">;
 
-type SqliteSessionEntryCache = SessionEntryCacheSnapshot & {
-  validityToken: SqliteSessionEntryRevision;
-};
-
 type SqliteSessionEntryCacheWriteGeneration = {
   after: number;
   before: number;
 };
-
-// Retain listing metadata only; complete prompt snapshots belong to the caller's full read.
-// Weak connection ownership lets closed read-only and evicted database handles release their
-// snapshots. The connection-local validity token plus tracked-write invalidation keeps live
-// snapshots current; narrow tracked upserts patch one authoritative row after commit, while
-// structural/unknown writes invalidate. Without both, every read would re-query and re-parse
-// every entry_json document.
-const sessionEntryCaches = new WeakMap<DatabaseSync, SqliteSessionEntryCache>();
 
 type CommittedSessionSharingFacts = { entry: SessionSharingEntry; membership: ReadonlySet<string> };
 
@@ -137,32 +127,6 @@ export function publishSessionSharingMemberChange(
 /** Commit-driven projections borrow owner memory; ordinary reads still validate SQLite. */
 export function readCommittedSessionEntryCache(database: DatabaseSync) {
   return sessionEntryCaches.get(database)?.entries;
-}
-
-/** Participant display facts may be borrowed in a transaction only at its native revision. */
-export function readCurrentSessionEntryCacheParticipants(
-  database: DatabaseSync,
-  sessionKey: string,
-): SessionParticipantProjection | undefined {
-  const cached = sessionEntryCaches.get(database);
-  const entry = cached?.entries.get(sessionKey);
-  if (
-    !cached ||
-    !entry ||
-    !getAdmittedSqliteSchemaFacts(database) ||
-    !cacheValidityTokensEqual(
-      cached.validityToken,
-      readSessionEntryCacheValidityToken(database, "cached"),
-    )
-  ) {
-    return undefined;
-  }
-  return entry.participants
-    ? {
-        participants: entry.participants.map(({ identity }) => ({ identity: { ...identity } })),
-        participantCount: entry.participantCount,
-      }
-    : {};
 }
 
 /** A settled worker with an unknown write outcome cannot publish a trustworthy field patch. */
