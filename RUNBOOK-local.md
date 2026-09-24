@@ -131,6 +131,51 @@ loopback → direct-local; SEM headers de proxy e FORA de trustedProxies → dir
 X-Forwarded-For). Manter `gateway.trustedProxies: []` (vazio). `allowRealIpFallback`
 só habilita confiança em header X-Real-IP — não resolve NAT sem headers.
 
+## Sandbox do agente: por que fica OFF (verificado 2026-09-24)
+Decisão deliberada — NÃO ligar `agents.defaults.sandbox` neste deploy:
+- `mode: "non-main"` sandboxa TODAS as sessões exceto `agent:<id>:main` — e sessões
+  de canal (WhatsApp/Telegram) contam como non-main. São exatamente onde o
+  `exec host=node` do main roda no host real (shutdown-pc.sh etc.) → sandboxado,
+  o exec cairia num container irmão e `whoami` deixaria de ser `gustavo`.
+- Backend docker com Gateway EM Docker cria containers irmãos via **docker.sock do
+  host montado no gateway** (docs/gateway/sandboxing/docker-backend.md). O compose
+  não monta o socket de propósito (cap_drop ALL, read_only). Montar = root-equivalente
+  no host dentro do gateway → perda líquida de segurança.
+- fluxo/higia/syndikos não têm exec/browser — sandbox só confinaria read/write/edit.
+  O confinamento real deles já vem de: chmod 400 na config, deny lists, allowlists
+  de canal, hardening do compose.
+- Se um dia precisar de sandbox de verdade (ex: agente de código), usar backend
+  ssh/openshell para uma VM em vez de montar o socket no gateway.
+
+## Exec approvals (2026.9.6): onde vive e o que falta p/ gatear o main
+O policy document migrou do JSON antigo para o **SQLite**:
+`~/.openclaw/state/openclaw.sqlite` row singleton `exec_approvals_config`
+(`exec-approvals.json` NÃO existe mais; o doctor importa o legado se aparecer).
+Estado atual (lido 2026-09-24):
+- `defaults`: security **allowlist**, ask off, askFallback **deny**, autoAllowSkills false
+- `agents.main`: security **FULL**, ask off, allowlist histórica que inclui
+  `/bin/sh` e `/usr/bin/dash` → com sh na lista, allowlist é decorativa.
+- Efetivo por agente (`openclaw exec-policy show --json` no host): main=full
+  (config pede `mode: full`), fluxo=deny, higia/syndikos=allowlist, tool-guardian=full.
+
+Por que o main roda sem gate: o próprio documento tem `agents.main.security: full`
+E o config tem `agents.entries.main.tools.exec.mode: "full"`. Para devolver o gate:
+1. Config (dance chmod 600/400): `agents.entries.main.tools.exec.mode: "ask"` (ou
+   `"auto"` — allowlist direto + revisão de misses; `"full"` nunca).
+2. Approvals doc: remover `agents.main` (herda defaults=allowlist) ou trocar
+   security p/ allowlist. Ferramenta: `openclaw exec-policy set` / `approvals`
+   CLI (docs/tools/exec-approvals.md); doc fica na row do SQLite compartilhado
+   node↔gateway (mesmo state dir).
+3. **Tirar `/bin/sh` e `/usr/bin/dash` da allowlist** — senão é teatro. Com
+   `mode: "auto"` o node revisa comando direto "pinned" mesmo vindo de wrapper sh.
+4. Allowlist útil p/ o fluxo atual: `shutdown-pc.sh`, `sudo /sbin/shutdown`,
+   `ls/cat/head/git`. Misses viram **approval card no canal** (2026.9.1: approval
+   chega no chat de origem, WhatsApp/Telegram, aprova por reação) — com
+   askFallback deny, sem UI disponível = bloqueia (fail closed, seguro).
+5. Testar: whoami via exec (deve continuar `gustavo`); comando fora da lista deve
+   gerar card de aprovação; `shutdown -c` à mão se algo travar.
+CUIDADO: gatear o main pode incomodar o fluxo diário de automação — avaliar antes.
+
 ## Build / cutover
 ```bash
 cd /home/gustavo/openclaw
@@ -169,7 +214,9 @@ systemctl --user is-active openclaw-node.service                          # acti
 - Primary: `google/gemini-3.8-flash` (API nativa, alias `gemini-flash`)
 - Fallbacks: `openrouter/google/gemini-3.8-flash` → `openrouter/deepseek/deepseek-v4.1-flash`
 - Transcrição de áudio: `tools.media.models[0].model = gemini-3.8-flash`
-- `modelPolicy.allow` acompanha (o gateway regenera a partir de `agents.defaults.models`)
+- `modelPolicy.allow` e `agents.defaults.models` são MANUAIS (o gateway NÃO
+  regenera; 2026-09-24: limpo qwen3-coder:free, allow com deepseek — fallback
+  funciona mesmo fora do allow, mas seleção manual `/model` precisa do allow)
 
 ## Rollback do update 2026-09-24 (→ v2026.6.5)
 imagem `openclaw:pre-update-20260924-rollback` + config `~/.openclaw/openclaw.json.bak-pre-update-20260924`
