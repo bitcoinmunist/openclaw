@@ -1,5 +1,5 @@
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
@@ -7,12 +7,19 @@ import {
   applySessionEntryLifecycleMutation,
   listSessionEntriesCore,
 } from "../../config/sessions/session-accessor.js";
+import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import { admitAgentRestartRecovery } from "../../gateway/agent-turn/agent-run-recovery-admission.js";
 import {
   getAgentEventLifecycleGeneration,
   rotateAgentEventLifecycleGeneration,
 } from "../../infra/agent-events.js";
-import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
+import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
+import type { DB as AgentDatabase } from "../../state/openclaw-agent-db.generated.js";
+import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
+import {
+  cleanupSessionStateForTest,
+  drainSessionStateForTest,
+} from "../../test-utils/session-state-cleanup.js";
 import * as recoveryOwnerRelease from "./main-session-recovery-owner-release.js";
 import {
   claimMainSessionRecoveryOwner,
@@ -39,19 +46,47 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("main session recovery store", () => {
   let dir: string;
+  let sharedDir: string | undefined;
   let lifecycleGeneration: string;
   let storePath: string;
+  const sharedDirs = useAutoCleanupTempDirTracker((cleanup) =>
+    afterAll(async () => {
+      await cleanupSessionStateForTest({ stateDir: sharedDir });
+      cleanup();
+    }),
+  );
 
   beforeEach(() => {
-    dir = tempDirs.make("openclaw-main-recovery-store-");
+    dir = sharedDir ??= sharedDirs.make("openclaw-main-recovery-store-");
     lifecycleGeneration = getAgentEventLifecycleGeneration();
     storePath = path.join(dir, "sessions.json");
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    await cleanupSessionStateForTest({ stateDir: dir });
+    if (dir !== sharedDir) {
+      await cleanupSessionStateForTest({ stateDir: dir });
+      return;
+    }
+    await drainSessionStateForTest({ stateDir: dir });
+    // Reset every key and retained window while keeping admitted database workers warm.
+    runOpenClawAgentWriteTransaction(
+      ({ db }) =>
+        executeSqliteQuerySync(
+          db,
+          getNodeSqliteKysely<AgentDatabase>(db).deleteFrom("session_nodes"),
+        ),
+      {
+        agentId: "main",
+        path: resolveSqliteTargetFromSessionStorePath(storePath, { agentId: "main" }).path,
+      },
+    );
   });
+
+  function useIsolatedStore() {
+    dir = tempDirs.make("openclaw-main-recovery-store-");
+    storePath = path.join(dir, "sessions.json");
+  }
 
   async function write(entry: SessionEntry): Promise<void> {
     await sessionAccessor.replaceSessionEntry({ sessionKey, storePath }, entry);
@@ -822,6 +857,7 @@ describe("main session recovery store", () => {
   });
 
   it("retains the shared-store agent owner through claim, refresh, and release", async () => {
+    useIsolatedStore();
     const target = { agentId: "ops", sessionKey: "global", storePath };
     await sessionAccessor.replaceSessionEntry(target, interruptedEntry());
 
@@ -859,6 +895,7 @@ describe("main session recovery store", () => {
   });
 
   it("settles an owned shared-store recovery receipt without redispatching", async () => {
+    useIsolatedStore();
     const target = { agentId: "ops", sessionKey: "global", storePath };
     await sessionAccessor.replaceSessionEntry(
       target,
