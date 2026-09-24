@@ -176,6 +176,17 @@ E o config tem `agents.entries.main.tools.exec.mode: "full"`. Para devolver o ga
    gerar card de aprovação; `shutdown -c` à mão se algo travar.
 CUIDADO: gatear o main pode incomodar o fluxo diário de automação — avaliar antes.
 
+**DECISÃO (2026-09-24): main permanece FULL de propósito — não gatear.** O Nexus
+delega ao Claude Code (`claude -p … --dangerously-skip-permissions`, já em uso);
+travar o wrapper de fora não reduz o raio real. O modelo de segurança aceito é:
+a trava dura fica na camada de DEPOIS do agente, não no shell dele —
+- config chmod 400 (agente não reescreve a própria config)
+- sudo: só `/sbin/shutdown` NOPASSWD (resto pede senha que o agente não tem)
+- backup semanal de todo o estado (`openclaw-backup.timer`) = rollback de dano
+- WhatsApp/Telegram allowlist só com o número do dono (superfície de injection mínima)
+- compose endurecido (read_only, cap_drop ALL) no processo do gateway
+Alterações nessa decisão exigem reavaliar o bloco acima (ex: expor o gateway na LAN).
+
 ## Build / cutover
 ```bash
 cd /home/gustavo/openclaw
