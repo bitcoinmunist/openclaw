@@ -183,6 +183,7 @@ For ordinary configured full/off execution without prompts for these forms, leav
   - Linux: `/usr/local/bin`, `/usr/bin`, `/bin`
   - To prevent user shell configuration (like `~/.zshenv` or `/etc/zshenv`) from overriding priority paths during startup, `tools.exec.pathPrepend` entries are securely prepended to the final `PATH` inside the shell command right before execution.
 - `host=sandbox`: runs `sh -lc` (login shell) inside the container, so `/etc/profile` may reset `PATH`. OpenClaw prepends `env.PATH` after profile sourcing via an internal env var (no shell interpolation). `tools.exec.pathPrepend` applies here too.
+- Native Codex on an owned local stdio process receives the same configured prefix and Gateway CLI shim ahead of the Gateway process `PATH`. Per-agent `tools.exec.pathPrepend` overrides the global list, including an empty list. OpenClaw applies this environment to new and resumed native threads and disables login-shell startup when a prefix is applied, so shell profiles cannot replace it. Host PATH entries are not forwarded to sandbox, remote-workspace, or socket-backed Codex execution.
 - `host=node`: only non-blocked env overrides you pass are sent to the node. `env.PATH` overrides are rejected for host execution and ignored by node hosts. If you need additional PATH entries on a node, configure the node host service environment (systemd/launchd) or install tools in standard locations.
 
 Per-agent node binding (use the keyed agent ID in config):

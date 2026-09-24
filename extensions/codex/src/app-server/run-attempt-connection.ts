@@ -37,6 +37,7 @@ import {
   resolveOpenClawExecPolicyForCodexAppServer,
   type CodexAppServerRuntimeOptions,
 } from "./config.js";
+import { isCodexAppServerProxyLaunch } from "./launch-args.js";
 import { resolveCodexNativeHookRelayEvents } from "./native-hook-relay.js";
 import { isCodexAppServerProfilerEnabled } from "./profiler-flag.js";
 import { ensureCodexWorkspaceDirOnce } from "./run-attempt-lifecycle.js";
@@ -144,23 +145,40 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
         ...preparedEnvironment.localProcessEnv,
       }
     : undefined;
-  const shellEnvironment =
+  const baseShellEnvironment =
     preparedShellEnvironment && Object.keys(preparedShellEnvironment).length > 0
       ? preparedShellEnvironment
       : undefined;
   // An empty system-detected overlay intentionally keeps the runtime user's native shell identity.
   // Selected, scrubbed, or remote identities must not let a later profile replace that decision.
-  const disableLoginShell =
+  const baseDisableLoginShell =
     remoteExec ||
     preparedEnvironment?.localProcessEnv !== undefined ||
     preparedEnvironment?.managedLocalIdentity === true ||
     (preparedEnvironment !== undefined &&
       Object.keys(preparedEnvironment.credentialScrubEnv).length > 0);
+  let shellEnvironment = baseShellEnvironment;
+  let disableLoginShell = baseDisableLoginShell;
   const withPreparedProcessEnv = <T extends CodexAppServerRuntimeOptions>(appServer: T) => {
     // Peer locality is not process ownership: disconnected socket turns can outlive recovery.
     assertLocalTargetSupported(
       appServer.start.transport !== "stdio" || Boolean(appServer.remoteWorkspaceRoot),
     );
+    // Resolve placement before projecting host PATH; socket peers and remote workspaces
+    // own their tool lookup even when their control connection runs on this machine.
+    const localToolEnv =
+      !sandbox?.enabled &&
+      !remoteExec &&
+      appServer.start.transport === "stdio" &&
+      !isCodexAppServerProxyLaunch(appServer.start.args) &&
+      !appServer.remoteWorkspaceRoot
+        ? preparedEnvironment?.localToolEnv
+        : undefined;
+    const hasLocalToolEnv = localToolEnv && Object.keys(localToolEnv).length > 0;
+    shellEnvironment = hasLocalToolEnv
+      ? { ...baseShellEnvironment, ...localToolEnv }
+      : baseShellEnvironment;
+    disableLoginShell = baseDisableLoginShell || Boolean(hasLocalToolEnv);
     return shellEnvironment
       ? {
           ...appServer,
