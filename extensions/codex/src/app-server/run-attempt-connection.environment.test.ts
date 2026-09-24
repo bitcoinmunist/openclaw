@@ -140,7 +140,7 @@ describe("Codex local tool environment placement", () => {
         expect(connection.shellEnvironment).toEqual(expected);
         expect(connection.shellPathPrepend).toEqual(expected ? ["/fixture/tools"] : undefined);
         expect(connection.appServer.start.env?.PATH).toBe(expected?.PATH);
-        expect(connection.disableLoginShell).toBe(placement === "local");
+        expect(connection.disableLoginShell).toBe(false);
         const refreshed = await connection.resolveRuntimeOptionsForCurrentBinding({
           modelProvider: "openai",
           model: params.modelId,

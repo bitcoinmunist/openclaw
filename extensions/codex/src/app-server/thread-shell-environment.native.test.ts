@@ -25,13 +25,19 @@ afterEach(() => {
 });
 
 // A loopback model selects commands; the pinned native binary owns shell execution.
-// The configured case omits login; the unconfigured case explicitly requests it
-// to prove the native default still allows login even when snapshots run via -c.
+// Explicit login remains valid with configured prefixes, including after resume.
+// Snapshots can run login commands via -c, so assert lookup instead of argv shape.
 describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
-  it.for([true, false])(
-    "executes fresh and cold-resumed commands with configured prefix=%s",
+  it.for([
+    { configured: true, loginAllowed: true, snapshots: true },
+    { configured: false, loginAllowed: true, snapshots: true },
+    { configured: true, loginAllowed: false, snapshots: true },
+    { configured: true, loginAllowed: true, snapshots: false },
+  ])(
+    "executes fresh and cold-resumed commands with %j",
     { timeout: 90_000 },
-    async (configured, context) => {
+    async ({ configured, loginAllowed, snapshots }, context) => {
+      const expectPrefix = configured && (snapshots || !loginAllowed);
       const tempDirs = useAutoCleanupTempDirTracker(context.onTestFinished);
       const root = await fs.realpath(tempDirs.make("codex-tool-path-"));
       const native = await createCodexNativeTestState(root);
@@ -66,9 +72,9 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
                     call_id: `path-probe-${requests.length}`,
                     name: "exec_command",
                     arguments: JSON.stringify({
-                      cmd: `${configured ? "tool-path-probe && native-path-probe && " : ""}if shopt -q login_shell; then echo LOGIN=yes; else echo LOGIN=no; fi`,
+                      cmd: `${expectPrefix ? "tool-path-probe && native-path-probe && " : ""}if shopt -q login_shell; then echo LOGIN=yes; else echo LOGIN=no; fi`,
                       shell: "/bin/bash",
-                      ...(configured ? {} : { login: true }),
+                      ...(loginAllowed ? { login: true } : {}),
                       max_output_tokens: 1000,
                     }),
                   }
@@ -137,6 +143,7 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           'approval_policy="never"',
           // This fixture tests lookup, not Linux namespace availability.
           'sandbox_mode="danger-full-access"',
+          ...(!loginAllowed ? ["allow_login_shell=false"] : []),
           ...(configured
             ? [
                 "[shell_environment_policy.set]",
@@ -145,6 +152,7 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
             : []),
           "[features]",
           "code_mode=false",
+          ...(!snapshots ? ["shell_snapshot=false"] : []),
           "[analytics]",
           "enabled=false",
           "[feedback]",
@@ -222,7 +230,7 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
                   effective.config.shell_environment_policy,
                 )
               : undefined,
-            disableLoginShell: shellEnvironment !== undefined,
+            disableLoginShell: false,
             modelProvider: "path-fixture",
             model: "gpt-5.6-luna",
             nativeCodeModeEnabled: true,
@@ -284,10 +292,14 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
           expect(output).toMatchObject({
             output: expect.stringContaining("Process exited with code 0"),
           });
-          if (configured) {
-            expect(output).toMatchObject({ output: expect.stringContaining("LOGIN=no") });
+          if (expectPrefix) {
             expect(output).toMatchObject({ output: expect.stringContaining(`SELECTED=${phase}`) });
             expect(output).toMatchObject({ output: expect.stringContaining("NATIVE=preserved") });
+          }
+          if (!loginAllowed || !snapshots) {
+            expect(output).toMatchObject({
+              output: expect.stringContaining(`LOGIN=${loginAllowed ? "yes" : "no"}`),
+            });
           }
         } finally {
           host.closeHost();

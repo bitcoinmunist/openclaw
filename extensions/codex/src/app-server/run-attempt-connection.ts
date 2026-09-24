@@ -151,7 +151,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       : undefined;
   // An empty system-detected overlay intentionally keeps the runtime user's native shell identity.
   // Selected, scrubbed, or remote identities must not let a later profile replace that decision.
-  const baseDisableLoginShell =
+  const disableLoginShell =
     remoteExec ||
     preparedEnvironment?.localProcessEnv !== undefined ||
     preparedEnvironment?.managedLocalIdentity === true ||
@@ -159,7 +159,6 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       Object.keys(preparedEnvironment.credentialScrubEnv).length > 0);
   let shellEnvironment = baseShellEnvironment;
   let shellPathPrepend: readonly string[] | undefined;
-  let disableLoginShell = baseDisableLoginShell;
   const withPreparedProcessEnv = <T extends CodexAppServerRuntimeOptions>(appServer: T) => {
     // Peer locality is not process ownership: disconnected socket turns can outlive recovery.
     assertLocalTargetSupported(
@@ -180,7 +179,8 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     shellEnvironment = hasLocalToolEnv
       ? { ...baseShellEnvironment, ...localToolEnv }
       : baseShellEnvironment;
-    disableLoginShell = baseDisableLoginShell || Boolean(hasLocalToolEnv);
+    // Tool lookup must not reject native login requests. Codex owns profile and
+    // snapshot startup; only the identity restrictions above disable login.
     return shellEnvironment
       ? {
           ...appServer,
