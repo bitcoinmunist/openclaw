@@ -67,6 +67,7 @@ export function applyCodexManagedShellEnvironment(
     : [];
   const filters = isJsonObject(current.filters) ? current.filters : undefined;
   const hasIncludeFilter = filters && Object.values(filters).includes("include");
+  const managedFilterNames = new Set(names.map((name) => name.toLowerCase()));
   const managedConfig = {
     ...config,
     shell_environment_policy: {
@@ -77,8 +78,14 @@ export function applyCodexManagedShellEnvironment(
         ? hasIncludeFilter
           ? {
               filters: {
-                ...filters,
-                ...Object.fromEntries(names.map((name) => [name, "include"])),
+                // Codex rejects case-equivalent patterns before merging layers.
+                // Replace managed aliases without changing unrelated wildcard filters.
+                ...Object.fromEntries(
+                  Object.entries(filters).filter(
+                    ([name]) => !managedFilterNames.has(name.toLowerCase()),
+                  ),
+                ),
+                ...Object.fromEntries([...managedFilterNames].map((name) => [name, "include"])),
               },
             }
           : {}

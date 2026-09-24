@@ -228,7 +228,7 @@ describe("Codex managed shell environment", () => {
   );
 
   it.each(["start", "resume"] as const)(
-    "admits host values through restrictive filters for thread/%s",
+    "admits host values through case-insensitive restrictive filters for thread/%s",
     (action) => {
       const options = {
         appServer: createAppServerOptions() as never,
@@ -236,11 +236,18 @@ describe("Codex managed shell environment", () => {
           allow_login_shell: false,
           shell_environment_policy: {
             experimental_use_profile: true,
-            filters: { PATH: "include", "GIT_*": "exclude" },
+            filters: {
+              KEEP_ME: "include",
+              path: "exclude",
+              gh_token: "exclude",
+              "GIT_*": "exclude",
+            },
             set: { KEEP_ME: "yes" },
           },
         },
         shellEnvironment: {
+          PATH: "/host-tools:/usr/bin",
+          Path: "/host-tools:/usr/bin",
           GH_CONFIG_DIR: "/host-selected",
           GH_TOKEN: "",
           PREVIEW_SERVICE_TOKEN: "",
@@ -263,18 +270,23 @@ describe("Codex managed shell environment", () => {
         experimental_use_profile: false,
         set: {
           KEEP_ME: "yes",
+          PATH: "/host-tools:/usr/bin",
+          Path: "/host-tools:/usr/bin",
           GH_CONFIG_DIR: "/host-selected",
           GH_TOKEN: "",
           PREVIEW_SERVICE_TOKEN: "",
         },
         filters: {
-          PATH: "include",
+          KEEP_ME: "include",
           "GIT_*": "exclude",
-          GH_CONFIG_DIR: "include",
-          GH_TOKEN: "include",
-          PREVIEW_SERVICE_TOKEN: "include",
+          path: "include",
+          gh_config_dir: "include",
+          gh_token: "include",
+          preview_service_token: "include",
         },
       });
+      const policy = request.config?.shell_environment_policy;
+      expect(isJsonObject(policy) && Object.keys(policy.filters ?? {})).toHaveLength(6);
       expect(request.config?.shell_environment_policy).not.toHaveProperty("include_only");
     },
   );

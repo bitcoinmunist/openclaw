@@ -29,14 +29,15 @@ afterEach(() => {
 // Snapshots can run login commands via -c, so assert lookup instead of argv shape.
 describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
   it.for([
-    { configured: true, loginAllowed: true, snapshots: true },
-    { configured: false, loginAllowed: true, snapshots: true },
-    { configured: true, loginAllowed: false, snapshots: true },
-    { configured: true, loginAllowed: true, snapshots: false },
+    { configured: true, loginAllowed: true, snapshots: true, filters: false },
+    { configured: false, loginAllowed: true, snapshots: true, filters: false },
+    { configured: true, loginAllowed: false, snapshots: true, filters: false },
+    { configured: true, loginAllowed: true, snapshots: false, filters: false },
+    { configured: true, loginAllowed: true, snapshots: true, filters: true },
   ])(
     "executes fresh and cold-resumed commands with %j",
     { timeout: 90_000 },
-    async ({ configured, loginAllowed, snapshots }, context) => {
+    async ({ configured, loginAllowed, snapshots, filters }, context) => {
       const expectPrefix = configured && (snapshots || !loginAllowed);
       const tempDirs = useAutoCleanupTempDirTracker(context.onTestFinished);
       const root = await fs.realpath(tempDirs.make("codex-tool-path-"));
@@ -148,6 +149,15 @@ describe.skipIf(process.platform === "win32")("native Codex tool PATH", () => {
             ? [
                 "[shell_environment_policy.set]",
                 `PATH=${JSON.stringify([nativeBin, "/usr/bin", "/bin"].join(path.delimiter))}`,
+                'KEEP="preserved"',
+              ]
+            : []),
+          ...(filters
+            ? [
+                "[shell_environment_policy.filters]",
+                'path="exclude"',
+                'KEEP="include"',
+                '"UNRELATED_*"="exclude"',
               ]
             : []),
           "[features]",
