@@ -11,6 +11,7 @@ import {
   createRootRunner,
   writePackageRoot,
 } from "./package-update-steps.test-support.js";
+import { resolveNpmGlobalPrefixLayoutFromPrefix } from "./update-npm-prefix.js";
 
 describe("npm-lifecycle-policy-preflight", () => {
   it.each([false, true])(
@@ -180,7 +181,8 @@ describe("package update recovery safety", () => {
           if (prefixIndex < 0 || !stagePrefix) {
             throw new Error("missing stage prefix");
           }
-          const stageRoot = path.join(stagePrefix, "lib", "node_modules", "openclaw");
+          const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(stagePrefix);
+          const stageRoot = path.join(stageLayout.globalRoot, "openclaw");
           await writeIdentity(stageRoot, after);
           return { name, command: argv.join(" "), cwd: stagePrefix, durationMs: 0, exitCode: 0 };
         });
@@ -289,12 +291,13 @@ describe("package update recovery safety", () => {
           if (!stagePrefix) {
             throw new Error("missing stage prefix");
           }
-          const stageRoot = path.join(stagePrefix, "lib", "node_modules", "openclaw");
+          const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(stagePrefix);
+          const stageRoot = path.join(stageLayout.globalRoot, "openclaw");
           await writePackageRoot(stageRoot, "1.0.0");
           await fs.writeFile(path.join(stageRoot, "dist", "index.js"), "new runtime\n");
           await writePackageDistInventory(stageRoot);
-          await fs.mkdir(path.join(stagePrefix, "bin"), { recursive: true });
-          await fs.writeFile(path.join(stagePrefix, "bin", "openclaw"), "new launcher\n");
+          await fs.mkdir(stageLayout.binDir, { recursive: true });
+          await fs.writeFile(path.join(stageLayout.binDir, "openclaw"), "new launcher\n");
           return { name, command: argv.join(" "), cwd: stagePrefix, durationMs: 0, exitCode: 0 };
         },
         validateCandidate: async (candidateRoot) => {
@@ -392,7 +395,8 @@ describe("package update recovery safety", () => {
             if (!prefix) {
               throw new Error("missing staged prefix");
             }
-            const installRoot = path.join(prefix, "lib", "node_modules", "openclaw");
+            const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(prefix);
+            const installRoot = path.join(stageLayout.globalRoot, "openclaw");
             await writePackageRoot(installRoot, "2.0.0");
             if (stagingSideEffect === "replaced") {
               await writePackageRoot(packageRoot, "2.0.0");
@@ -486,7 +490,8 @@ describe("package update recovery safety", () => {
               if (!prefix) {
                 throw new Error("missing stage prefix");
               }
-              const staged = path.join(prefix, "lib", "node_modules", "openclaw");
+              const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(prefix);
+              const staged = path.join(stageLayout.globalRoot, "openclaw");
               await writePackageRoot(staged, "2.0.0");
               await fs.writeFile(stateCanary, "migrated by staged lifecycle");
               if (failure === "activation") {
@@ -543,11 +548,9 @@ describe("package update recovery safety", () => {
             if (!stagePrefix) {
               throw new Error("missing stage prefix");
             }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            const stagedBinDir = path.join(stagePrefix, "bin");
+            const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(stagePrefix);
+            await writePackageRoot(path.join(stageLayout.globalRoot, "openclaw"), "2.0.0");
+            const stagedBinDir = stageLayout.binDir;
             await fs.mkdir(stagedBinDir, { recursive: true });
             await Promise.all(
               shimNames.map((shimName) =>
@@ -672,11 +675,9 @@ describe("package update recovery safety", () => {
             if (!stagePrefix) {
               throw new Error("missing stage prefix");
             }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            const stagedBinDir = path.join(stagePrefix, "bin");
+            const stageLayout = resolveNpmGlobalPrefixLayoutFromPrefix(stagePrefix);
+            await writePackageRoot(path.join(stageLayout.globalRoot, "openclaw"), "2.0.0");
+            const stagedBinDir = stageLayout.binDir;
             await fs.mkdir(stagedBinDir, { recursive: true });
             await fs.writeFile(path.join(stagedBinDir, "openclaw"), "new openclaw\n", "utf8");
             await fs.writeFile(
