@@ -127,6 +127,9 @@ docker tag openclaw:local openclaw:pre-X-rollback   # rollback rápido antes de 
 docker compose up -d openclaw-gateway          # recreate (downtime breve)
 systemctl --user restart openclaw-node.service # node reconecta ao gateway
 ```
+Hardening da config: `openclaw.json` fica **chmod 400** (agente não escreve — ver
+memory/openclaw-notes). Toda manutenção que escreve config: `chmod 600` antes,
+`chmod 400` depois. O `~/bin/openclaw-update.sh` faz o dance automaticamente.
 Reiniciar o node host DEPOIS do gateway estabilizado (conectar durante churn causa
 "node pairing changed before request dispatch" no publish de skills — resolve com
 novo restart do node).
