@@ -525,7 +525,7 @@ export async function runManagedCommand({
   const ownsProcessTree = requireProcessTreeExit || windowsJobs.has(child);
   // Socket.closed can precede its native close callback. Observe real pipe
   // completion before onReady can cancel or otherwise reenter finalization.
-  const pendingOutputCloses = new Set([child.stdout, child.stderr].filter((pipe) => pipe !== null));
+  const pendingOutputCloses = new Set([child.stdout, child.stderr].filter((pipe) => pipe != null));
   const removeOutputCloseListeners = [...pendingOutputCloses].map((pipe) => {
     const onClose = () => {
       pendingOutputCloses.delete(pipe);
@@ -712,7 +712,8 @@ export async function finalizeManagedChild(
   const job = windowsJobs.get(child);
   const normalJobExit = !signal && job !== undefined;
   const outputClosed =
-    areOutputPipesClosed ?? (() => [child.stdout, child.stderr].every((pipe) => !pipe || pipe.closed));
+    areOutputPipesClosed ??
+    (() => [child.stdout, child.stderr].every((pipe) => !pipe || pipe.closed));
   let joined = false;
   const failures: unknown[] = [];
   try {
