@@ -64,11 +64,16 @@ imagem docker. O node host (npm stock) reporta "configured plugin package is mis
 or has not converged" — inofensivo: gateway roda o plugin, node host só audita.
 Se um dia incomodar: publicar o fork no npm e instalar o pacote no node host também.
 
-### Pre-keys do WhatsApp acumulando (manutenção futura)
-`~/.openclaw/credentials/whatsapp/default/` tinha 167k arquivos `pre-*` (pre-keys
-Baileys) em 2026-09-24 — o protocolo usa dezenas. Não afeta a operação, mas pesa em
-inodes/backup. Se um dia limpar: manter os mais recentes e NUNCA apagar `creds.json`,
-`session-*`, `identity*`, `sender-key*` (só com sessão re-emparelhável à mão).
+### Pre-keys do WhatsApp acumulando (verificado 2026-09-24)
+`credentials/whatsapp/default/` tinha 167.448 `pre-key-*.json` (par {private,public},
+4KB cada). FLOOD em **5–12/set** (10k–28k/dia, ~150k no pico — loop de upload do
+plugin/baileys ANTIGOS; logs se perderam no recreate do container). Desde 13/set
+~150/dia; **0 criados após o update de 24/set** (plugin 2026.9.4 + baileys novo, com
+`lib/Utils/pre-key-manager.js` — processa deleções do protocolo mas não poda antigos).
+Frequência de restart é o que dispara re-upload (938 no dia do update).
+Limpeza proposta (NÃO executada): stash de `pre-key-*.json` >14 dias (~150k, reversível)
++ monitorar "decrypt" nos logs por 7 dias. NUNCA apagar `creds.json`, `session-*`,
+`identity*`, `sender-key-*` (não casam com o padrão `pre-key-*.json`).
 
 ## Segredos (SecretRefs — migrado 2026-09-24)
 `gateway.auth.token`, `channels.telegram.botToken` e o auth profile
