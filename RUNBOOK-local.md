@@ -48,11 +48,21 @@ do plugin novo → "global message acknowledgement settings": o emoji agora vive
 Novo no canal: `reactionLevel: "ack"|"off"|"minimal"|"extensive"` (ack reactions exigem
 `"ack"`). Config atual: `messages.ackReaction: "👀"` + `reactionLevel: "ack"`.
 
-### Quirk do node host (cosmético)
-O node host audita o peer link `extensions/whatsapp/node_modules/openclaw → /app`,
-que só existe no container → warning "data/settings upgrade is unfinished" no
-journal do node. Inofensivo (o gateway é quem roda o plugin; conexão e skills ok).
-Fix opcional no host: `sudo ln -s ~/.nvm/versions/node/v24.21.0/lib/node_modules/openclaw /app`.
+### Quirks do node host (audit de plugins, cross-contexto)
+O estado é compartilhado container↔host, mas os paths gravados são os do container.
+WhatsApp (resolvido 2026-09-24): o audit do peer link checa
+`/home/node/.openclaw/extensions/whatsapp/node_modules/openclaw → /app`. Symlinks no
+host fazem ambos contextos resolverem os mesmos arquivos:
+```bash
+sudo ln -s /home/gustavo /home/node                                                      # home compartilhada
+sudo ln -s ~/.nvm/versions/node/v24.21.0/lib/node_modules/openclaw /app                  # install openclaw
+```
+(Se o Node mudar de versão no nvm, atualizar o symlink /app.)
+
+rag-autoinject (cosmético, SEM fix limpo): plugin exclusivo do fork, compilado só na
+imagem docker. O node host (npm stock) reporta "configured plugin package is missing
+or has not converged" — inofensivo: gateway roda o plugin, node host só audita.
+Se um dia incomodar: publicar o fork no npm e instalar o pacote no node host também.
 
 ## Docker NAT × trustedProxies (descoberta 2026-09-24)
 Com bridge docker (`-p 127.0.0.1:18789:18789`), o gateway vê conexões do node host
