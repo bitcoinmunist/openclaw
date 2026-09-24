@@ -128,7 +128,24 @@ export async function maybeApplyTtsToPayloadCore(
   });
   const ttsMetadata = getReplyPayloadMetadata(params.payload);
   const explicitTts = ttsMetadata?.ttsExplicit === true;
-  if (!explicitTts && (autoMode === "off" || ttsMetadata?.commandReply)) {
+  if (!explicitTts && ttsMetadata?.commandReply) {
+    return params.payload;
+  }
+  if (!explicitTts && autoMode === "off") {
+    // local patch: even when TTS auto mode is off, strip [[tts]] directives so the
+    // raw markers (agents emit a bare [[tts]] tag) don't leak into visible message
+    // text; synthesis itself stays off.
+    const offReply = resolveSendableOutboundReplyParts(params.payload);
+    const offText = offReply.text ?? "";
+    const offDirectives = parseTtsDirectives(offText, config.modelOverrides, {
+      cfg,
+      providerConfigs: config.providerConfigs,
+      preferredProviderId: resolveTtsProvider(config, prefsPath),
+    });
+    const offCleaned = offDirectives.cleanedText.trim();
+    if (offCleaned !== offText.trim()) {
+      return { ...params.payload, text: offCleaned || undefined };
+    }
     return params.payload;
   }
   const activeProvider = resolveTtsProvider(config, prefsPath);
