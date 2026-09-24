@@ -89,47 +89,6 @@ export const writeNpmPackageInstall = async (
   });
 };
 
-const stripOpenClawPackageAlias = (spec: string) => {
-  const trimmed = spec.trim();
-  return trimmed.toLowerCase().startsWith("openclaw@")
-    ? trimmed.slice("openclaw@".length)
-    : trimmed;
-};
-
-export const isNpmGitPackageSpec = (spec: string) => {
-  const target = stripOpenClawPackageAlias(spec);
-  const [repo] = target.split("#", 1);
-  const isGitHubShorthand =
-    Boolean(repo) &&
-    !expectDefined(repo, "repo test invariant").startsWith(".") &&
-    !expectDefined(repo, "repo test invariant").startsWith("/") &&
-    !expectDefined(repo, "repo test invariant").startsWith("@") &&
-    expectDefined(repo, "repo test invariant").split("/").length === 2 &&
-    expectDefined(repo, "repo test invariant")
-      .split("/")
-      .every((part) => /^[^\s/:@]+$/u.test(part));
-  let isHttpGitUrl;
-  try {
-    const url = new URL(target);
-    const pathname = url.pathname.replace(/\/+$/u, "");
-    const pathParts = pathname.split("/").filter(Boolean);
-    isHttpGitUrl =
-      (url.protocol === "https:" || url.protocol === "http:") &&
-      (pathname.endsWith(".git") ||
-        (url.hostname.toLowerCase() === "github.com" && pathParts.length === 2));
-  } catch {
-    isHttpGitUrl = false;
-  }
-  return (
-    /^github:/i.test(target) ||
-    /^git(?:\+|:)/i.test(target) ||
-    /^ssh:\/\//i.test(target) ||
-    /^[^@\s]+@[^:\s]+:[^#\s]+(?:#.*)?$/u.test(target) ||
-    isHttpGitUrl ||
-    isGitHubShorthand
-  );
-};
-
 export const packageTargetStatus = (
   overrides: Partial<{
     target: string;
