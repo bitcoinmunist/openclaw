@@ -64,6 +64,51 @@ imagem docker. O node host (npm stock) reporta "configured plugin package is mis
 or has not converged" — inofensivo: gateway roda o plugin, node host só audita.
 Se um dia incomodar: publicar o fork no npm e instalar o pacote no node host também.
 
+### Pre-keys do WhatsApp acumulando (manutenção futura)
+`~/.openclaw/credentials/whatsapp/default/` tinha 167k arquivos `pre-*` (pre-keys
+Baileys) em 2026-09-24 — o protocolo usa dezenas. Não afeta a operação, mas pesa em
+inodes/backup. Se um dia limpar: manter os mais recentes e NUNCA apagar `creds.json`,
+`session-*`, `identity*`, `sender-key*` (só com sessão re-emparelhável à mão).
+
+## Segredos (SecretRefs — migrado 2026-09-24)
+`gateway.auth.token`, `channels.telegram.botToken` e o auth profile
+`google-vertex:default` vivem agora como refs para o **file provider** `filemain`
+→ `~/.openclaw/secrets.json` (0600; vai junto no backup). Audit limpo nos dois
+contextos: `openclaw secrets audit --check` (rode no container E no host).
+
+Armadilha descoberta: `secrets apply` grava o ref SÓ no store do agent alvo
+(`agents/<id>/agent/openclaw-agent.sqlite`, tabela `auth_profile_store`); a cópia
+canônica `state-db` (`state/openclaw.sqlite`, row `config_machine_state` →
+`authProfiles.store`) fica com plaintext porque o scrub do apply só é alimentado
+por targets de config (src/secrets/apply.ts ~linha 449), nunca pelos de
+auth-profiles. Fix: replicar o payload com `keyRef` do agent DB nessa row (gateway
+parado) e re-auditar. Se adicionar um perfil de API key novo, repetir esse passo.
+Legacy `auth.json.migrated-*` pode ser removido depois do audit limpo (originais
+ficam no tar de backup pré-update).
+
+## Doctor: rode do CONTAINER (falso positivo no host)
+Os symlinks cross-contexto do host (`/home/node → /home/gustavo`, `/app → npm
+global`) enganam checks de filesystem: o doctor do HOST acusa 5× "workspace-alias…
+Incoming messages cannot use this workspace" e "MCP nexus-tools ENOTFOUND
+host.docker.internal" — **nenhum existe de verdade** (verificado 2026-09-24:
+doctor --json dentro do container = só 2 findings, ambos esperados: loopback-only
+é hardening intencional; plaintext secrets foi resolvido com SecretRefs). O MCP
+nexus-tools escuta em 172.17.0.1:8790 e o container resolve via extra_hosts
+host-gateway. Regra: `docker compose run --rm -T openclaw-gateway node dist/index.js
+doctor --json --non-interactive`.
+
+## Automação (2026-09-24)
+- `~/bin/openclaw-backup.sh` + `openclaw-backup.timer` (domingos 09:17): tar.gz em
+  `~/.openclaw-backups/` (700/600), sqlite via `.backup` (consistente com gateway
+  no ar), retenção 4.
+- `~/bin/openclaw-health.sh` + `openclaw-health.timer` (5 min): healthz + container
+  healthy + node ativo; alerta (logger + notify-send) só na transição ok→falha.
+- `~/bin/openclaw-update.sh v2026.X.Y`: codifica o cutover deste RUNBOOK (rollback
+  image → branch → cherry-picks → build → stop/doctor --fix/up → node → verify).
+  EDITE a lista de PATCHES a cada release. Em conflito de cherry-pick ele para.
+- Build cache docker cresce a cada rebuild (169GB uma vez): podar com
+  `docker buildx prune -f --max-used-space=10GB` (deixa 10GB p/ rebuild rápido).
+
 ## Docker NAT × trustedProxies (descoberta 2026-09-24)
 Com bridge docker (`-p 127.0.0.1:18789:18789`), o gateway vê conexões do node host
 como vindas do gateway IP da bridge (172.23.0.1). O 2026.9.6 atribui ingress:
