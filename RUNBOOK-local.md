@@ -240,9 +240,20 @@ ausente, CLI não instalado, `GH_TOKEN` ausente). Disabled = custo zero; ready
 gating de config por segurança). Análise da substituição do fluxo antigo:
 - `--permission-mode bypassPermissions --print` == `--dangerously-skip-permissions -p`
   (flag preservado; AGENTS.md ensina a forma nova + mantém referência à antiga).
-- NÃO precisa tmux p/ Claude Code: skill usa `background:true` nativo do exec +
-  monitoramento `process` (tmux seria só p/ Codex/OpenCode com PTY). tmux skill
-  continua disabled.
+- NÃO precisa tmux p/ Claude Code, MAS **background nativo também não existe
+  no caminho node** — descoberto em e2e (25/set): o branch `host === "node"` em
+  `bash-tools.exec-run.ts:443` retorna ANTES da maquinaria de yield/background
+  (linha 687), então `background:true` degrada pra síncrono em toda exec via
+  node. Teto síncrono: **1800s** (`resolveExecDefaultTimeoutSec`). Comando curto
+  (<janela de yield, se um dia rodar local) devolve direto; via node, sempre
+  bloqueia. **Adaptação em produção (AGENTS.md)**: tarefa extensa =
+  `nohup claude … --print < prompt > /tmp/worker-N.log 2>&1 &` + acompanhar por
+  `cat` do log + notificação via message send. E2E provado 3×: worker cria
+  arquivo, Nexus lê resultado (E2E-OK/BG-OK/BG3-OK), 45s sync sem sessionId.
+- Tool `process` adicionada ao `tools.allow` do main (25/set) — e **só
+  registrou após `docker compose restart`** (hot reload aplicou a config mas
+  não reconstruiu o toolset ring-zero do agente). Inócuo hoje via node, útil
+  se exec local voltar a existir.
 - Skill exige worktree isolado p/ projetos git (nunca no checkout principal
   `~/openclaw`) e rota de notificação. **Rota provada (24/set): o HOST CLI não
   tem scopes p/ operator, mas o worker roda `docker exec
