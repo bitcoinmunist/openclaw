@@ -229,6 +229,11 @@ ausente, CLI não instalado, `GH_TOKEN` ausente). Disabled = custo zero; ready
 - Descoberta FUNCIONA (selftest 24/set): weather respondeu com dados reais
   via rota wttr.in da skill; diagram-maker escreveu SVG no caminho montado.
 - `notion` era falso-ready (`anyBins` aceita curl) → `enabled: false` no config.
+- **Falso amarelo do coding-agent**: `skills list` mostra "needs setup" porque o
+  check de bins roda no CONTAINER (sem `claude`); o binário vive no HOST, onde o
+  exec roda. Verificado no fonte (`skill-index.ts: isSkillPromptVisible`):
+  visibilidade no prompt depende só de exposure, não de readiness — a skill
+  está no índice do agente. Não re-debugar.
 - `skills.entries` tem hot reload ("skills snapshot invalidated" nos logs).
 
 **coding-agent habilitado** (`skills.entries.coding-agent.enabled: true` —
