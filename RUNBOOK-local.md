@@ -219,6 +219,62 @@ dentro do container → Chrome no host como gustavo → `browser stop` limpo.
   `PATH=~/.nvm/versions/node/v24.21.0/bin:$PATH` na frente (senão roda com o
   node v24.13.0 do PATH).
 
+## Skills (2026-09-24/25): estado real, coding-agent habilitado, 1ª skill própria
+
+**Estado do catálogo (54 p/ o main): 16 ready, 38 disabled — e é o estado
+CERTO.** Doctor desliga skill cujo binário/env falta (macOS-only, hardware
+ausente, CLI não instalado, `GH_TOKEN` ausente). Disabled = custo zero; ready
+= ~1 linha de índice no system prompt, corpo lido on-demand.
+
+- Descoberta FUNCIONA (selftest 24/set): weather respondeu com dados reais
+  via rota wttr.in da skill; diagram-maker escreveu SVG no caminho montado.
+- `notion` era falso-ready (`anyBins` aceita curl) → `enabled: false` no config.
+- `skills.entries` tem hot reload ("skills snapshot invalidated" nos logs).
+
+**coding-agent habilitado** (`skills.entries.coding-agent.enabled: true` —
+gating de config por segurança). Análise da substituição do fluxo antigo:
+- `--permission-mode bypassPermissions --print` == `--dangerously-skip-permissions -p`
+  (flag preservado; AGENTS.md ensina a forma nova + mantém referência à antiga).
+- NÃO precisa tmux p/ Claude Code: skill usa `background:true` nativo do exec +
+  monitoramento `process` (tmux seria só p/ Codex/OpenCode com PTY). tmux skill
+  continua disabled.
+- Skill exige worktree isolado p/ projetos git (nunca no checkout principal
+  `~/openclaw`) e rota de notificação. **Rota provada (24/set): o HOST CLI não
+  tem scopes p/ operator, mas o worker roda `docker exec
+  openclaw-openclaw-gateway-1 node dist/index.js message send --channel
+  whatsapp --target <jid> …` → entregue com sucesso nos logs.** Documentado no
+  AGENTS.md (seção Claude Code reescrita).
+
+**1ª skill própria: `youtube-resume`** (via workshop, fluxo completo sem UI):
+```
+# proposal a partir de dir com PROPOSAL.md + templates/SKILL.md (suporte só
+# sob assets|examples|references|scripts|templates; rootfs do container é RO —
+# usar caminho montado, ex workspace, e apagar depois)
+docker exec … node dist/index.js skills workshop propose-create --agent main \
+  --name youtube-resume --description "…" --goal "…" --evidence "…" \
+  --proposal-dir /home/node/.openclaw/workspace/.tmp-workshop
+docker exec … node dist/index.js skills workshop apply <proposal-id> --agent main
+```
+Scan clean (0 critical/warn); aplicada em
+`agents/main/agent/workshop-skills/youtube-resume/`; `skills list` = ✓ ready
+(source `openclaw-workshop`). Pipeline: yt-dlp (host) → whisperx-eagro
+`POST localhost:8003/transcribe` (multipart `file`, param `language`) →
+resumo do próprio agente → `MEDIA:` pela pasta Imagens. Testar e2e com um
+vídeo real no WhatsApp.
+
+**Cron trimestral criado:** `healthcheck-trimestral` (`17 10 1 1,4,7,10 *`,
+tz America/Sao_Paulo, agent main, announce → whatsapp): roda a skill
+`healthcheck` contra o host e resume achados. Próxima: 1º/out 10:17.
+Ver/gerenciar: `openclaw cron list|remove` (do container).
+
+**Candidatas próximas p/ skills próprias** (decisão do Gustavo):
+1. `rig-watch` — nvidia-smi + `dmesg | grep -i xid` (histórico Xid 79!) +
+   containers + whisper-model; alerta proativo no WhatsApp.
+2. `media-resume` — generalizar youtube-resume p/ qualquer áudio/vídeo local.
+3. `tela` — scrot + leitura multimodal da imagem ("o que tá na minha tela?").
+4. `arqueologia` — consultas git/dpkg do histórico da máquina (projeto mapeado,
+   não implementado).
+
 ## Build / cutover
 ```bash
 cd /home/gustavo/openclaw
