@@ -187,6 +187,38 @@ a trava dura fica na camada de DEPOIS do agente, não no shell dele —
 - compose endurecido (read_only, cap_drop ALL) no processo do gateway
 Alterações nessa decisão exigem reavaliar o bloco acima (ex: expor o gateway na LAN).
 
+## Browser do agente (testado 2026-09-24) — funciona, não é fantasma
+A tool `browser` do main NÃO roda no container: `gateway.nodes.browser.mode`
+default `auto` + `nodeHost.browserProxy` default on → o gateway roteia pelo node
+pareado e lança o **google-chrome do HOST** com perfil isolado
+`~/.openclaw/browser/openclaw/user-data` (CDP 127.0.0.1:18800, --no-proxy-server,
+disable-sync; sem cookies do Chrome pessoal). Teste real: `browser open` de
+dentro do container → Chrome no host como gustavo → `browser stop` limpo.
+- headless false de propósito (janela visível no desktop = auditoria). Se
+  incomodar: `browser.headless: true` (dance 600/400).
+- Descoberta pro agente: seção "## Browser (perfil isolado no PC real)" no
+  `~/.openclaw/workspace/AGENTS.md` (o TOOLS.md migrou pra DENTRO do AGENTS.md —
+  arquivo TOOLS.md não existe mais).
+- NÃO instalar Chromium no container (brigaria com read_only/cap_drop) nem
+  subir container browserless (redundante com o proxy do node).
+- Login em sites (`browser-login`): NÃO fazer por enquanto — cookies de sessão
+  reais num perfil dirigido pelo agente amplia o raio. Reavaliar com use case.
+
+## web_search (2026-09-24): provider gemini reusando a chave existente
+- `tools.web.search.provider: "gemini"` + SecretRef
+  `plugins.entries.google.config.webSearch.apiKey` →
+  `/profiles/google-vertex:default/key` (mesma chave do modelo; zero credencial
+  nova — o plugin DDG nem foi instalado; fica como fallback key-free).
+- `web_search`/`web_fetch` entraram no `tools.allow` do main — allowlist
+  não-vazia é RESTRITIVA e os removia antes. Hot reload aplicou sem restart.
+- Teste: selftest de dentro do container → resultado com citações (grounding).
+- `web_fetch` já era on por default (plugin web-readability), com SSRF policy.
+- Gotchas de selftest: (1) CLI do HOST conecta sem operator scopes →
+  "missing scope: operator.write" — rodar `docker exec … node dist/index.js
+  agent …` do container; (2) binário v24.21.0 do host exige
+  `PATH=~/.nvm/versions/node/v24.21.0/bin:$PATH` na frente (senão roda com o
+  node v24.13.0 do PATH).
+
 ## Build / cutover
 ```bash
 cd /home/gustavo/openclaw
