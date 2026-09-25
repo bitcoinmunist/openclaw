@@ -267,13 +267,31 @@ tz America/Sao_Paulo, agent main, announce → whatsapp): roda a skill
 `healthcheck` contra o host e resume achados. Próxima: 1º/out 10:17.
 Ver/gerenciar: `openclaw cron list|remove` (do container).
 
-**Candidatas próximas p/ skills próprias** (decisão do Gustavo):
-1. `rig-watch` — nvidia-smi + `dmesg | grep -i xid` (histórico Xid 79!) +
-   containers + whisper-model; alerta proativo no WhatsApp.
-2. `media-resume` — generalizar youtube-resume p/ qualquer áudio/vídeo local.
-3. `tela` — scrot + leitura multimodal da imagem ("o que tá na minha tela?").
-4. `arqueologia` — consultas git/dpkg do histórico da máquina (projeto mapeado,
-   não implementado).
+**Rodada 2 aplicada (24/25/set, aprovação do Gustavo): `rig-watch`, `tela`,
+`media-resume`** — todas via workshop (scan clean, apply, ✓ ready). 
+
+- `rig-watch` é DUPLA: (1) **script determinístico** `~/bin/rig-watch.sh` +
+  `rig-watch.{service,timer}` (systemd user, 10 min, state em
+  `~/.local/state/rig-watch.json`): Xid/AER-fatal → alerta (debounce 60 min);
+  AER correctable → só surto >5/janela (debounce 12 h — baseline é ruído
+  conhecido, 0-3/dia, e HAVIA 3 em 24h no dia da instalação); whisperx caído →
+  alerta 30 min. Alerta = `docker exec … message send` (target lido do
+  allowFrom do config, sem número hardcoded); gateway caído não tem canal
+  (disso cuida o openclaw-health.timer). (2) **skill de diagnóstico** no Nexus:
+  journalctl -k (dmesg cru bloqueado sem sudo; gustavo no grupo adm),
+  nvidia-smi com clocks_throttle_reasons, classificação Xid grave vs AER
+  correctable = ruído, plano GPU (reencaixe → 12VHPWR → BIOS Gen3). AGENTS.md
+  tem seção dizendo pro Nexus seguir a skill quando chegar alerta.
+- `tela`: scrot → `read` (multimodal PROVADO em selftest — Nexus descreveu
+  tela real) → descrição; regra de higiene pra conteúdo sensível em grupos.
+- `media-resume`: generaliza youtube-resume pra arquivos locais/anexos
+  (workspace/media); backend do whisperx decodifica containers via ffmpeg
+  (fallback incluso).
+- Teste de canal do rig-watch entregue no WhatsApp (2º ping de teste do dia).
+- Pendente e2e real: um vídeo do YouTube (youtube-resume) e um podcast local
+  (media-resume) — mandar pelo WhatsApp e conferir.
+- Fila restante: `arqueologia` (projeto mapeado, não implementado); email
+  (himalaya) e portais gov (browser-login) aguardando decisão do Gustavo.
 
 ## Build / cutover
 ```bash
