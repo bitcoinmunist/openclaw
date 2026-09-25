@@ -290,8 +290,30 @@ Ver/gerenciar: `openclaw cron list|remove` (do container).
 - Teste de canal do rig-watch entregue no WhatsApp (2º ping de teste do dia).
 - Pendente e2e real: um vídeo do YouTube (youtube-resume) e um podcast local
   (media-resume) — mandar pelo WhatsApp e conferir.
-- Fila restante: `arqueologia` (projeto mapeado, não implementado); email
-  (himalaya) e portais gov (browser-login) aguardando decisão do Gustavo.
+- Fila restante: email (himalaya) e portais gov (browser-login) aguardando
+  decisão do Gustavo.
+
+**Arqueologia digital v1 (25/set, 5ª skill própria):** conceito da memória
+(23/set) virou ferramenta no ecossistema atual.
+- Extrator `~/bin/arqueologia-extrai.sh` → estratos TSV idempotentes em
+  `~/arqueologia/` (0.9s): `commits.tsv` (AUTORAL: 7.829 commits — classe_delta
+  7.599, capital_drain 153, wear-biometria 48, fork 18, config-PC 11),
+  `dpkg.tsv` (apt history com commandline), `configs.tsv`, `bins.tsv`,
+  `nexus-memory.tsv`. Timer semanal `arqueologia.timer` (dom 09:47,
+  Persistent=true, protege contra rotação de logs).
+- Skill `arqueologia` no Nexus (workshop, scan clean, ✓ ready): receitas
+  grep/awk por pergunta + síntese em ERAS narradas. **Selftest passou**:
+  "tempo entre 1º docker e pico do Sistema Delta" → escavou e respondeu
+  22/jan/2026 → abr/2026 corretamente citando os estratos.
+- **Pegadinha 1**: `git --author` usa regexp BASIC por default — `|` é literal;
+  usar múltiplos `--author` (OR nativo). **Pegadinha 2**: o upstream do
+  openclaw tem contribuidor homônimo "Gustavo Madeira Santana" (1.2K commits) —
+  o fork entra no estrato como `openclaw-fork` por RANGE `tag..HEAD`
+  (describe --tags auto-adapta a cada release), nunca por autor.
+- Ponte dos escopos: classe_delta É o histórico timestampado do Sistema Delta
+  — a mesma ferramenta escava técnica e consciencial.
+- Embeddings semânticos (qwen3-embedding/Ollama) ficam pra v2, se as queries
+  estruturais provarem insuficientes.
 
 ## Build / cutover
 ```bash
