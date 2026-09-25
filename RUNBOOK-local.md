@@ -331,6 +331,20 @@ Ver/gerenciar: `openclaw cron list|remove` (do container).
 - Embeddings semânticos (qwen3-embedding/Ollama) ficam pra v2, se as queries
   estruturais provarem insuficientes.
 
+**Spam no WhatsApp pós-restart (25/set, resolvido):** duas causas distintas.
+1. Banner "First heartbeat alert: … run openclaw config set
+   agents.defaults.heartbeat.target none" — onboarding do produto; o heartbeat
+   do main estava no default `owner` (= WhatsApp do Gustavo). Fix:
+   `agents.defaults.heartbeat.target: "none"` (hot reload ok) — runs internos,
+   sem entrega. (HEARTBEAT.md segue arquivado pelo doctor; heartbeat roda mas
+   não incomoda.)
+2. Resultados de SELFTESTS entregues no chat (E2E-OK, BG-OK, arqueologia): o
+   restart do gateway interrompe as sessões `agent:main:selftest-*` e a
+   recuperação as RETOMA, entregando a saída pendente pro chat do owner.
+   **Regra**: após restarts, deletar sessões de teste:
+   `openclaw sessions delete --yes agent:main:selftest-*` (listar antes com
+   `sessions list --agent main`). Feito em 25/set (9 sessões).
+
 ## Build / cutover
 ```bash
 cd /home/gustavo/openclaw
